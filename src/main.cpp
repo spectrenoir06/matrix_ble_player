@@ -85,7 +85,7 @@ File f;
 
 uint8_t button_isPress = 0;
 
-int printBLE(const char *cstr) {
+int sendBLE(const char *cstr) {
 	if (deviceConnected) {
 		pTxCharacteristic->setValue((uint8_t*)cstr, strlen(cstr));
 		pTxCharacteristic->notify();
