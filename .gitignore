@@ -1,3 +1,5 @@
-# Plataformio IDE
+# Plateformio IDE
 .pio
 .vscode
+.clang_complete
+.gcc-flags.json
