@@ -4,7 +4,7 @@
 #include <atomic>
 
 extern MatrixPanel_I2S_DMA *display;
-extern int printBLE(const char *str, size_t len);
+extern int sendBLE(const char*);
 extern void flip_matrix();
 extern int spectre_lua_plz_stop;
 
@@ -41,8 +41,16 @@ namespace {
 
   static int lua_wrapper_printBLE(lua_State *lua_state) {
     size_t len = 0;
-    const char *str = luaL_checklstring(lua_state, 1, &len);
-    return printBLE(str, len);
+    const char *ret = luaL_checklstring(lua_state, 1, &len);
+    if (len > 0) {
+      char *str = (char*)malloc(len+3);
+      str[0] = '!';
+      str[1] = '#';
+      memcpy(str+2, ret, len);
+      str[len+2] = '\x00';
+      return sendBLE(str);
+    }
+    return 0;
   }
 
   static int lua_wrapper_clearDisplay(lua_State *lua_state) {
@@ -159,7 +167,7 @@ namespace {
       errstr[0] = '\x00';
       strcat(errstr, "!S");
       strcat(errstr, ret.c_str());
-      printBLE(errstr, len);
+      sendBLE(errstr);
     }
   }
 
