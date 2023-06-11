@@ -149,6 +149,7 @@ namespace {
     
     Serial.println("Start task runLuaTask");
     String* str = current_lua_script.exchange(nullptr, std::memory_order_acq_rel);
+    spectre_lua_plz_stop = 0;
     String ret = lua.Lua_dostring(str);
     delete str;
     Serial.println(ret);
@@ -165,9 +166,8 @@ namespace {
   void runLuaTask(void* parameter) {
     // Infinite loop :-)
     for(;;) {
-      if (current_lua_script != NULL) {
+      if (current_lua_script.load() != nullptr) {
         lua_exec();
-        spectre_lua_plz_stop = 0;
       }
       vTaskDelay(1 / portTICK_PERIOD_MS);
     };
