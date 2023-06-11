@@ -565,7 +565,7 @@ void playAnimeTask(void* parameter) {
 					strcat(str, tmp_file.name());
 					pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
 					pTxCharacteristic->notify();
-					Serial.println(str);
+					// Serial.println(str);
 					tmp_file = tmp_root.openNextFile();
 				}
 				memset(str, 0, 255);
