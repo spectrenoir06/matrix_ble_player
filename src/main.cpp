@@ -714,12 +714,12 @@ void setup() {
 	// Create a BLE Characteristic
 	pTxCharacteristic = pService->createCharacteristic(
 		CHARACTERISTIC_UUID_TX,
-		NIMBLE_PROPERTY::NOTIFY
+		NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ
 	);
 
 	BLECharacteristic* pRxCharacteristic = pService->createCharacteristic(
 		CHARACTERISTIC_UUID_RX,
-		NIMBLE_PROPERTY::WRITE
+		NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE_NR
 	);
 
 	pRxCharacteristic->setCallbacks(new MyCallbacks());
