@@ -243,6 +243,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 						Serial.printf("Open %s\n", str);
 						file.close();
 						file = filesystem.open(str);
+						Lua::stop();
 						anim = ANIM_START;
 					}
 					break;
