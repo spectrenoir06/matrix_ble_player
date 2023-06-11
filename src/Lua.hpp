@@ -15,6 +15,7 @@ namespace Lua {
 
   /**
    * Run the supplied script.
+   * If another script is running, it will stopped first.
    */
   void run_script(String script);
 

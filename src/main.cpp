@@ -85,6 +85,13 @@ File f;
 
 uint8_t button_isPress = 0;
 
+int printBLE(const char *str, size_t len) {
+	if (deviceConnected) {
+		pTxCharacteristic->setValue((uint8_t*)str, len);
+		pTxCharacteristic->notify();
+	}
+	return 0;
+}
 
 void flip_matrix() {
 	display->flipDMABuffer();

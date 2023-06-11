@@ -3,11 +3,10 @@
 #include <NimBLEDevice.h>
 #include <atomic>
 
-extern NimBLECharacteristic* pTxCharacteristic;
-extern bool deviceConnected;
 extern MatrixPanel_I2S_DMA *display;
-extern int spectre_lua_plz_stop;
+extern int printBLE(const char *str, size_t len);
 extern void flip_matrix();
+extern int spectre_lua_plz_stop;
 
 namespace {
 
@@ -41,13 +40,9 @@ namespace {
   }
 
   static int lua_wrapper_printBLE(lua_State *lua_state) {
-    if (deviceConnected) {
-      size_t len = 0;
-      const char *str = luaL_checklstring(lua_state, 1, &len);
-      pTxCharacteristic->setValue((uint8_t*)str, len);
-      pTxCharacteristic->notify();
-    }
-    return 0;
+    size_t len = 0;
+    const char *str = luaL_checklstring(lua_state, 1, &len);
+    return printBLE(str, len);
   }
 
   static int lua_wrapper_clearDisplay(lua_State *lua_state) {
@@ -157,14 +152,14 @@ namespace {
       // ignore.
       return;
     }
-    Serial.println(ret);
-    if (deviceConnected) {
-      char str[512];
-      memset(str, 0, 512);
-      strcat(str, "!S");
-      strcat(str, ret.c_str());
-      pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
-      pTxCharacteristic->notify();
+    size_t len = 2 + strlen(ret.c_str()) + 1;
+    if (len > 3) {
+      Serial.println(ret);
+      char *errstr = (char*)malloc(len);
+      errstr[0] = '\x00';
+      strcat(errstr, "!S");
+      strcat(errstr, ret.c_str());
+      printBLE(errstr, len);
     }
   }
 
