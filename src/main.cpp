@@ -475,8 +475,19 @@ int32_t GIFSeekFile(GIFFILE* pFile, int32_t iPosition) {
 
 
 void load_anim() {
+	if (!file) {
+		anim_on = false;
+		display->fillScreen(0);
+		display->setCursor(4, 4);
+		display->setTextSize(1);
+		display->setTextColor(display->color565(255,255,255));
+		display->printf("Can't find");
+		display->setCursor(4, 4+9);
+		display->printf("Gif!");
+		flip_matrix();
+		return;
+	}
 	Serial.printf("Open animation: '%s'\n", file.path());
-
 	display->clearScreen();
 	if (gif.open(file.path(), GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
 		Serial.print("load anim: ");
@@ -637,18 +648,16 @@ void setup() {
 			if (!filesystem.begin(SD_CS, SPI)) {
 				Serial.println("Card Mount Failed");
 				anim_on = false;
-					display->fillScreen(0);
-					display->setCursor(4, 4);
-					display->setTextSize(1);
-					display->setTextColor(display->color565(255,255,255));
-					display->printf("Can't mnt");
-					display->setCursor(4, 4+9);
-					display->printf("SD Card!");
-					flip_matrix();
+				display->fillScreen(0);
+				display->setCursor(4, 4);
+				display->setTextSize(1);
+				display->setTextColor(display->color565(255,255,255));
+				display->printf("Can't mnt");
+				display->setCursor(4, 4+9);
+				display->printf("SD Card!");
+				flip_matrix();
 				delay(10);
 			} else {
-				// root = filesystem.open("/");
-				// file = root.openNextFile();
 				anim_on = true;
 				break;
 			}
