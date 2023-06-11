@@ -41,16 +41,18 @@ namespace {
 
   static int lua_wrapper_printBLE(lua_State *lua_state) {
     size_t len = 0;
-    const char *ret = luaL_checklstring(lua_state, 1, &len);
+    const char *lstr = luaL_checklstring(lua_state, 1, &len);
+    int ret = 0;
     if (len > 0) {
       char *str = (char*)malloc(len+3);
       str[0] = '!';
       str[1] = '#';
-      memcpy(str+2, ret, len);
+      memcpy(str+2, lstr, len);
       str[len+2] = '\x00';
-      return sendBLE(str);
+      ret = sendBLE(str);
+      free(str);
     }
-    return 0;
+    return ret;
   }
 
   static int lua_wrapper_clearDisplay(lua_State *lua_state) {
@@ -168,6 +170,7 @@ namespace {
       strcat(errstr, "!S");
       strcat(errstr, ret.c_str());
       sendBLE(errstr);
+      free(errstr);
     }
   }
 
