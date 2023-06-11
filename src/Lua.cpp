@@ -152,6 +152,11 @@ namespace {
     spectre_lua_plz_stop = 0;
     String ret = lua.Lua_dostring(str);
     delete str;
+    if (ret.indexOf("lua plz stop") > -1) {
+      // this is not a real error but just a termination request.
+      // ignore.
+      return;
+    }
     Serial.println(ret);
     if (deviceConnected) {
       char str[512];
