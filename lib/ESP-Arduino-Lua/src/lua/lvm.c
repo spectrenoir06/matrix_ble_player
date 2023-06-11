@@ -751,10 +751,13 @@ void luaV_finishOp (lua_State *L) {
                          Protect(L->top = ci->top));  /* restore top */ \
            luai_threadyield(L); }
 
+int spectre_lua_plz_stop = 0;
 
 /* fetch an instruction and prepare its execution */
 #define vmfetch()	{ \
   i = *(ci->u.l.savedpc++); \
+  if (spectre_lua_plz_stop) \
+    Protect(luaG_runerror(L, "lua plz stop")); \
   if (L->hookmask & (LUA_MASKLINE | LUA_MASKCOUNT)) \
     Protect(luaG_traceexec(L)); \
   ra = RA(i); /* WARNING: any stack reallocation invalidates 'ra' */ \

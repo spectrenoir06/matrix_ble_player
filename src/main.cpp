@@ -1,7 +1,7 @@
 #include <AnimatedGIF.h>
-#include <LuaWrapper.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <NimBLEDevice.h>
+#include "Lua.hpp"
 
 #define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -41,7 +41,6 @@ enum ANIM {
 
 uint8_t anim_on = false;
 static TaskHandle_t animeTaskHandle = NULL;
-static TaskHandle_t runLuaTaskHandle = NULL;
 
 File file;
 File root;
@@ -77,8 +76,6 @@ int timeout_var = 0;
 #define timeout_time 3000; // ms
 int time_reveice = 0;
 String lua_script = "";
-uint8_t run_lua = false;
-LuaWrapper *lua;
 uint8_t list_send_mode = false;
 
 float gif_scale;
@@ -87,6 +84,7 @@ int gif_off_y;
 File f;
 
 uint8_t button_isPress = 0;
+
 
 void flip_matrix() {
 	display->flipDMABuffer();
@@ -105,171 +103,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 	flip_matrix();
 }
 
-static int lua_wrapper_updateDisplay(lua_State *lua_state) {
-	flip_matrix();
-	return 0;
-}
 
-static int lua_wrapper_drawPixel(lua_State *lua_state) {
-	int x = luaL_checkinteger(lua_state, 1);
-	int y = luaL_checkinteger(lua_state, 2);
-	int r = luaL_checkinteger(lua_state, 3);
-	int g = luaL_checkinteger(lua_state, 4);
-	int b = luaL_checkinteger(lua_state, 5);
-	display->drawPixelRGB888(x, y, r, g, b);
-	return 0;
-}
-
-static int lua_wrapper_delay(lua_State *lua_state) {
-	int a = luaL_checkinteger(lua_state, 1);
-	delay(a);
-	return 0;
-}
-
-static int lua_wrapper_millis(lua_State *lua_state) {
-	lua_pushnumber(lua_state, (lua_Number) millis());
-	return 1;
-}
-
-static int lua_wrapper_printBLE(lua_State *lua_state) {
-	if (deviceConnected) {
-		size_t len = 0;
-		const char *str = luaL_checklstring(lua_state, 1, &len);
-		pTxCharacteristic->setValue((uint8_t*)str, len);
-		pTxCharacteristic->notify();
-	}
-	return 0;
-}
-
-static int lua_wrapper_clearDisplay(lua_State *lua_state) {
-	display->clearScreen();
-	return 0;
-}
-
-static int lua_wrapper_setTextColor(lua_State *lua_state) {
-	int r = luaL_checkinteger(lua_state, 1);
-	int g = luaL_checkinteger(lua_state, 2);
-	int b = luaL_checkinteger(lua_state, 3);
-	display->setTextColor(display->color565(r,g,b));
-	return 0;
-}
-
-static int lua_wrapper_printText(lua_State *lua_state) {
-	size_t len = 0;
-	const char *str = luaL_checklstring(lua_state, 1, &len);
-	display->print(str);
-	return 0;
-}
-
-static int lua_wrapper_setCursor(lua_State *lua_state) {
-	int x = luaL_checkinteger(lua_state, 1);
-	int y = luaL_checkinteger(lua_state, 2);
-	display->setCursor(x,y);
-	return 0;
-}
-
-static int lua_wrapper_setTextSize(lua_State *lua_state) {
-	int size = luaL_checkinteger(lua_state, 1);
-	display->setTextSize(size);
-	return 0;
-}
-
-static int lua_wrapper_fillRect(lua_State *lua_state) {
-	int x = luaL_checkinteger(lua_state, 1);
-	int y = luaL_checkinteger(lua_state, 2);
-
-	int w = luaL_checkinteger(lua_state, 3);
-	int h = luaL_checkinteger(lua_state, 4);
-
-	int r = luaL_checkinteger(lua_state, 5);
-	int g = luaL_checkinteger(lua_state, 6);
-	int b = luaL_checkinteger(lua_state, 7);
-	display->fillRect(x, y, w, h, r, g, b);
-	return 0;
-}
-
-static int lua_wrapper_colorWheel(lua_State *lua_state) {
-	uint8_t pos = luaL_checkinteger(lua_state, 1);
-	uint8_t r,g,b;
-	if(pos < 85) {
-		r = pos * 3;
-		g = 255 - pos * 3;
-		b = 0;
-	} else if(pos < 170) {
-		pos -= 85;
-		r = 255 - pos * 3;
-		g = 0;
-		b = pos * 3;
-	} else {
-		pos -= 170;
-		r = 0;
-		g = pos * 3;
-		b = 255 - pos * 3;
-	}
-	lua_pushinteger(lua_state, (lua_Integer)r);
-	lua_pushinteger(lua_state, (lua_Integer)g);
-	lua_pushinteger(lua_state, (lua_Integer)b);
-	return 3;
-}
-
-
-static int lua_wrapper_setTextWrap(lua_State *lua_state) {
-	if (lua_isboolean(lua_state, 1))
-		display->setTextWrap(lua_toboolean(lua_state, 1));
-	return 0;
-}
-
-void kill_lua_task() {
-	if (runLuaTaskHandle) {
-		vTaskDelete(runLuaTaskHandle);
-		runLuaTaskHandle = NULL;
-	}
-}
-
-void runLuaTask(void* parameter) {
-	{
-		lua = new LuaWrapper();
-		lua->Lua_register("clearDisplay", (const lua_CFunction) &lua_wrapper_clearDisplay);
-		lua->Lua_register("updateDisplay", (const lua_CFunction) &lua_wrapper_updateDisplay);
-		lua->Lua_register("drawPixel", (const lua_CFunction) &lua_wrapper_drawPixel);
-		lua->Lua_register("fillRect", (const lua_CFunction) &lua_wrapper_fillRect);
-		lua->Lua_register("colorWheel", (const lua_CFunction) &lua_wrapper_colorWheel);
-
-		lua->Lua_register("delay", (const lua_CFunction) &lua_wrapper_delay);
-		lua->Lua_register("millis", (const lua_CFunction) &lua_wrapper_millis);
-
-		lua->Lua_register("setTextColor", (const lua_CFunction) &lua_wrapper_setTextColor);
-		lua->Lua_register("setTextWrap", (const lua_CFunction) &lua_wrapper_setTextWrap);
-		lua->Lua_register("printText", (const lua_CFunction) &lua_wrapper_printText);
-		lua->Lua_register("setCursor", (const lua_CFunction) &lua_wrapper_setCursor);
-		lua->Lua_register("setTextSize", (const lua_CFunction) &lua_wrapper_setTextSize);
-		
-		lua->Lua_register("printBLE", (const lua_CFunction) &lua_wrapper_printBLE);
-		
-		
-
-		Serial.println("Start task runLuaTask");
-		String str = lua_script;
-		String ret = lua->Lua_dostring(&str);
-		Serial.println(ret);
-		if (deviceConnected) {
-			char str[512];
-			memset(str, 0, 512);
-			strcat(str, "!S");
-			strcat(str, ret.c_str());
-			pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
-			pTxCharacteristic->notify();
-		}
-		delete lua;
-		lua = NULL;
-	}
-	for(;;) {
-		vTaskDelay(1 / portTICK_PERIOD_MS);
-	};
-	Serial.println("Ending task runLuaTask (should not happen oh no)");
-	runLuaTaskHandle = NULL;
-	vTaskDelete(NULL);
-}
 
 void print_progress(const char *str) {
 	display->fillScreen(0);
@@ -335,12 +169,12 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 					}
 					break;
 				case 'C':
-					kill_lua_task();
+					Lua::stop();
 					set_all_pixel(rxValue[2], rxValue[3], rxValue[4], 0);
 					break;
 				case 'I':
 					{
-						kill_lua_task();
+						Lua::stop();
 						anim = ANIM_UDP;
 						img_receive_color_depth = rxValue[2];
 						img_receive_width = rxValue[3] + (rxValue[4] << 8);
@@ -372,7 +206,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 					break;
 				case 'G': // add file
 					{
-						kill_lua_task();
+						Lua::stop();
 						anim = ANIM_UDP;
 						gif_receive_mode = true;
 						const char* data = rxValue.c_str();
@@ -420,7 +254,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 						data_size = *(uint32_t*)(data + 2);
 						Serial.printf("load lua size:%d\n", data_size);
 						byte_to_store = 0;
-						kill_lua_task();
+						Lua::stop();
 						lua_script = "";
 						for (int i = 2 + 4; i < rxValue.length(); i++) {
 							lua_script += rxValue[i];
@@ -502,21 +336,8 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 				Serial.printf("receive Lua OK\n");
 				Serial.printf("time to receive Lua: %dms\n", millis() - time_reveice);
 				timeout_var = 0;
-				if (lua) {
-					delete lua;
-					lua = NULL;
-				}
 				Serial.println("[APP] Free memory: " + String(esp_get_free_heap_size()) + " bytes");
-				BaseType_t result = xTaskCreatePinnedToCore(
-					runLuaTask,   /* Task function. */
-					"runLuaTask", /* String with name of task. */
-					1024 * 20,  /* Stack size in bytes. */
-					NULL,	   /* Parameter passed as input of the task */
-					1,		   /* Priority of the task. */
-					&runLuaTaskHandle,	   /* Task handle. */
-					1
-				);
-				Serial.printf("xTaskCreatePinnedToCore returned %d\n", result);
+				Lua::run_script(lua_script);
 			}
 			else {
 				print_progress("load lua:");
@@ -865,6 +686,8 @@ void setup() {
 		&animeTaskHandle,	   /* Task handle. */
 		1
 	);
+
+	Lua::init();
 
 	Serial.println("Start BLE");
 	// Create the BLE Device
