@@ -1,6 +1,6 @@
-#include <AnimatedGIF.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <NimBLEDevice.h>
+#include "Gif.hpp"
 #include "Lua.hpp"
 
 #define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
@@ -40,15 +40,10 @@ enum ANIM {
 };
 
 uint8_t anim_on = false;
-static TaskHandle_t animeTaskHandle = NULL;
+// static TaskHandle_t animeTaskHandle = NULL;
 
-File file;
-
-unsigned long previousMillis = 0;
 uint8_t anim = ANIM_START;
 uint8_t next_anim = 1;
-AnimatedGIF gif;
-uint32_t next_frame=0;
 
 char	hostname[50] = DEFAULT_HOSTNAME;
 
@@ -79,7 +74,6 @@ uint8_t list_send_mode = false;
 float gif_scale;
 int gif_off_x;
 int gif_off_y;
-File global_gif_file; // global, to remove
 
 uint8_t button_isPress = 0;
 
@@ -102,7 +96,6 @@ void set_brightness(int b) {
 }
 
 void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
-	anim = ANIM_UDP;
 	delay(100);
 	display->fillScreenRGB888(r,g,b);
 	flip_matrix();
@@ -166,8 +159,10 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 								set_brightness(brightness-2);
 							break;
 						case '2':
-							if (rxValue[3] == '1')
+							if (rxValue[3] == '1') {
+								SpectreGif::stop();
 								set_all_pixel(0, 0, 0, 255);
+							}
 							break;
 						default:
 							break;
@@ -180,7 +175,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 				case 'I':
 					{
 						Lua::stop();
-						anim = ANIM_UDP;
+						SpectreGif::stop();
 						img_receive_color_depth = rxValue[2];
 						img_receive_width = rxValue[3] + (rxValue[4] << 8);
 						img_receive_height = rxValue[5] + (rxValue[6] << 8);
@@ -212,7 +207,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 				case 'G': // add file
 					{
 						Lua::stop();
-						anim = ANIM_UDP;
+						SpectreGif::stop();
 						gif_receive_mode = true;
 						const char* data = rxValue.c_str();
 						char str[255];
@@ -246,15 +241,14 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 						if (ptr)
 							*ptr = 0;
 						Serial.printf("Open %s\n", str);
-						file.close();
-						file = filesystem.open(str);
 						Lua::stop();
-						anim = ANIM_START;
+						File file = filesystem.open(str);
+						SpectreGif::play(file.path());
 					}
 					break;
 				case 'S':
 					{
-						anim = ANIM_UDP;
+						SpectreGif::stop();
 						lua_receive_mode = true;
 						const char* data = rxValue.c_str();
 						data_size = *(uint32_t*)(data + 2);
@@ -322,8 +316,8 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 				gif_receive_mode = false;
 				Serial.printf("receive GIF OK\n");
 				const char* tmp = f_tmp.path();
-				file = filesystem.open(tmp);
-				anim = ANIM_START;
+				File file = filesystem.open(tmp);
+				SpectreGif::play(file.path());
 				f_tmp.close();
 				timeout_var = 0;
 				Serial.printf("time to receive gif: %dms\n", millis() - time_reveice);
@@ -353,126 +347,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 };
 
 
-
-// Draw a line of image directly on the LED Matrix
-void GIFDraw(GIFDRAW* pDraw) {
-	uint8_t* s;
-	uint16_t* d, * usPalette, usTemp[320];
-	int y, iWidth;
-
-	iWidth = pDraw->iWidth;
-	if (iWidth > MATRIX_WIDTH)
-		iWidth = MATRIX_WIDTH;
-
-	usPalette = pDraw->pPalette;
-	y = pDraw->iY + pDraw->y; // current line
-
-	s = pDraw->pPixels;
-	if (pDraw->ucDisposalMethod == 2) // restore to background color
-	{
-		for (int x = 0; x < iWidth; x++) {
-			if (s[x] == pDraw->ucTransparent)
-				s[x] = pDraw->ucBackground;
-		}
-		pDraw->ucHasTransparency = 0;
-	}
-	// Apply the new pixels to the main image
-	if (pDraw->ucHasTransparency) // if transparency used
-	{
-		uint8_t* pEnd, c, ucTransparent = pDraw->ucTransparent;
-		int x, iCount;
-		pEnd = s + pDraw->iWidth;
-		x = 0;
-		iCount = 0; // count non-transparent pixels
-		while (x < pDraw->iWidth) {
-			c = ucTransparent - 1;
-			d = usTemp;
-			while (c != ucTransparent && s < pEnd) {
-				c = *s++;
-				if (c == ucTransparent) // done, stop
-				{
-					s--; // back up to treat it like transparent
-				}
-				else // opaque
-				{
-					*d++ = usPalette[c];
-					iCount++;
-				}
-			} // while looking for opaque pixels
-			if (iCount) // any opaque pixels?
-			{
-				for (int xOffset = 0; xOffset < iCount; xOffset++) {
-					display->drawPixel(x + xOffset, y, usTemp[xOffset]); // 565 Color Format
-				}
-				x += iCount;
-				iCount = 0;
-			}
-			// no, look for a run of transparent pixels
-			c = ucTransparent;
-			while (c == ucTransparent && s < pEnd) {
-				c = *s++;
-				if (c == ucTransparent)
-					iCount++;
-				else
-					s--;
-			}
-			if (iCount) {
-				x += iCount; // skip these
-				iCount = 0;
-			}
-		}
-	}
-	else // does not have transparency
-	{
-		s = pDraw->pPixels;
-		// Translate the 8-bit pixels through the RGB565 palette (already byte reversed)
-		for (int x = 0; x < pDraw->iWidth; x++) {
-			display->drawPixel(x, y, usPalette[*s++]); // color 565
-		}
-	}
-} /* GIFDraw() */
-
-void* GIFOpenFile(const char* fname, int32_t* pSize) {
-	global_gif_file = filesystem.open(fname);
-	if (global_gif_file) {
-		*pSize = global_gif_file.size();
-		return (void*)&global_gif_file;
-	}
-	return NULL;
-} /* GIFOpenFile() */
-
-void GIFCloseFile(void* pHandle) {
-	File* f = static_cast<File*>(pHandle);
-	if (f != NULL)
-		f->close();
-	} /* GIFCloseFile() */
-
-int32_t GIFReadFile(GIFFILE* pFile, uint8_t* pBuf, int32_t iLen) {
-	int32_t iBytesRead;
-	iBytesRead = iLen;
-	File* f = static_cast<File*>(pFile->fHandle);
-	// Note: If you read a file all the way to the last byte, seek() stops working
-	if ((pFile->iSize - pFile->iPos) < iLen)
-		iBytesRead = pFile->iSize - pFile->iPos - 1; // <-- ugly work-around
-	if (iBytesRead <= 0)
-		return 0;
-	iBytesRead = (int32_t)f->read(pBuf, iBytesRead);
-	pFile->iPos = f->position();
-	return iBytesRead;
-} /* GIFReadFile() */
-
-int32_t GIFSeekFile(GIFFILE* pFile, int32_t iPosition) {
-	int i = micros();
-	File* f = static_cast<File*>(pFile->fHandle);
-	f->seek(iPosition);
-	pFile->iPos = (int32_t)f->position();
-	i = micros() - i;
-	//  Serial.printf("Seek time = %d us\n", i);
-	return pFile->iPos;
-} /* GIFSeekFile() */
-
-
-void load_anim() {
+void load_anim(File file) {
 	if (!file) {
 		anim_on = false;
 		display->fillScreen(0);
@@ -487,90 +362,61 @@ void load_anim() {
 	}
 	Serial.printf("Open animation: '%s'\n", file.path());
 	display->clearScreen();
-	gif.close();
-	if (gif.open(file.path(), GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
-		Serial.print("load anim: ");
-		Serial.print(file.name());
-		Serial.print("\tsize: ");
-		Serial.print(file.size() / (1024.0 * 1024.0));
-		Serial.println(" Mo");
+	
+	SpectreGif::play(file.path());
+	Serial.print("load anim: ");
+	Serial.print(file.name());
+	Serial.print("\tsize: ");
+	Serial.print(file.size() / (1024.0 * 1024.0));
+	Serial.println(" Mo");
 
-		if (deviceConnected) {
-			char str[100];
-			memset(str, 0, 100);
-			strcat(str, "!P");
-			strcat(str, file.name());
-			strcat(str, "\r\n");
-			pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
-			pTxCharacteristic->notify();
-		}
-		anim = ANIM_PLAY;
-	} else {
-		anim = ANIM_UDP;
+	if (deviceConnected) {
+		char str[100];
+		memset(str, 0, 100);
+		strcat(str, "!P");
+		strcat(str, file.name());
+		strcat(str, "\r\n");
+		pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
+		pTxCharacteristic->notify();
 	}
-
 }
+
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define BUF_SIZE (256*1)
 
-void read_anim_frame() {
-	
-
-	int t = millis();
-	int i;
-	if (gif.playFrame(false, &i)) {
-		next_frame = t + i;
-		flip_matrix();
-	}
-	else {
-		gif.reset();
-	}
-}
-
 void playAnimeTask(void* parameter) {
-	gif.begin(LITTLE_ENDIAN_PIXELS);
 	File root;
 	root = filesystem.open("/GIF");
 
 	if (root) {
 		for (;;) {
+			if (gif_receive_mode) {
+				// Check for timeouts
+				if (timeout_var != 0 && millis() > timeout_var) {
+					image_receive_mode = false;
+					gif_receive_mode = false;
+					Serial.printf("timemout\n");
+					timeout_var = 0;
+					next_anim = 1;
+				}
+			}
+
 			if (digitalRead(0) == LOW || next_anim) {
 				if (!button_isPress || next_anim) {
 					button_isPress = 1;
 					next_anim = 0;
-					anim = ANIM_START;
-					file.close();
-					file = root.openNextFile();
+					File file = root.openNextFile();
 					if (!file) {
 						root.close();
 						root = filesystem.open("/GIF");
 						file = root.openNextFile();
 					}
+					load_anim(file);
 					// vTaskDelay(20 / portTICK_PERIOD_MS);
 				}
 			} else
 				button_isPress = 0;
 
-			switch (anim) {
-				case ANIM_START:
-					load_anim();
-					break;
-				case ANIM_PLAY:
-					if (millis() >= next_frame ) {
-						previousMillis = millis();
-						read_anim_frame();
-					}
-					break;
-				case ANIM_UDP:
-					if (timeout_var != 0 && millis() > timeout_var) {
-						anim = ANIM_START;
-						image_receive_mode = false;
-						gif_receive_mode = false;
-						Serial.printf("timemout\n");
-						timeout_var = 0;
-					}
-					break;
-			}
 			if (list_send_mode) {
 				list_send_mode = false;
 				Serial.printf("Print list files:\n");
@@ -693,17 +539,15 @@ void setup() {
 		}
 	#endif
 
-	xTaskCreatePinnedToCore(
-		playAnimeTask,   /* Task function. */
-		"playAnimeTask", /* String with name of task. */
-		8192 * 2,  /* Stack size in bytes. */
-		NULL,	   /* Parameter passed as input of the task */
-		5,		   /* Priority of the task. */
-		&animeTaskHandle,	   /* Task handle. */
-		1
-	);
-
-	Lua::init();
+	// xTaskCreatePinnedToCore(
+	// 	playAnimeTask,   /* Task function. */
+	// 	"playAnimeTask", /* String with name of task. */
+	// 	4096,  /* Stack size in bytes. */
+	// 	NULL,	   /* Parameter passed as input of the task */
+	// 	5,		   /* Priority of the task. */
+	// 	&animeTaskHandle,	   /* Task handle. */
+	// 	1
+	// );
 
 	Serial.println("Start BLE");
 	// Create the BLE Device
@@ -738,6 +582,10 @@ void setup() {
 	BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
 	// pAdvertising->setAppearance(0x7<<6); // glasses
 	pAdvertising->setAppearance(0x01F << 6 | 0x06); // LEDs 
+	
+	SpectreGif::init();
+	Lua::init();
+	Serial.println("::init() OK");
 
 	// Start advertising
 	pServer->getAdvertising()->start();
@@ -746,5 +594,6 @@ void setup() {
 
 void loop(void) {
 	vTaskDelay(20 / portTICK_PERIOD_MS);
+	return playAnimeTask(NULL);
 }
 
