@@ -42,7 +42,6 @@ uint8_t anim_on = false;
 static TaskHandle_t animeTaskHandle = NULL;
 
 File file;
-File root;
 
 unsigned long previousMillis = 0;
 uint8_t anim = ANIM_START;
@@ -56,7 +55,6 @@ uint8_t* leds;
 uint8_t* buffer;
 uint8_t brightness = BRIGHTNESS;
 
-static NimBLEServer* pServer = NULL;
 NimBLECharacteristic* pTxCharacteristic;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
@@ -80,7 +78,7 @@ uint8_t list_send_mode = false;
 float gif_scale;
 int gif_off_x;
 int gif_off_y;
-File f;
+File global_gif_file; // global, to remove
 
 uint8_t button_isPress = 0;
 
@@ -378,7 +376,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 void GIFDraw(GIFDRAW* pDraw) {
 	uint8_t* s;
 	uint16_t* d, * usPalette, usTemp[320];
-	int x, y, iWidth;
+	int y, iWidth;
 
 	iWidth = pDraw->iWidth;
 	if (iWidth > MATRIX_WIDTH)
@@ -390,7 +388,7 @@ void GIFDraw(GIFDRAW* pDraw) {
 	s = pDraw->pPixels;
 	if (pDraw->ucDisposalMethod == 2) // restore to background color
 	{
-		for (x = 0; x < iWidth; x++) {
+		for (int x = 0; x < iWidth; x++) {
 			if (s[x] == pDraw->ucTransparent)
 				s[x] = pDraw->ucBackground;
 		}
@@ -446,17 +444,17 @@ void GIFDraw(GIFDRAW* pDraw) {
 	{
 		s = pDraw->pPixels;
 		// Translate the 8-bit pixels through the RGB565 palette (already byte reversed)
-		for (x = 0; x < pDraw->iWidth; x++) {
+		for (int x = 0; x < pDraw->iWidth; x++) {
 			display->drawPixel(x, y, usPalette[*s++]); // color 565
 		}
 	}
 } /* GIFDraw() */
 
 void* GIFOpenFile(const char* fname, int32_t* pSize) {
-	f = filesystem.open(fname);
-	if (f) {
-		*pSize = f.size();
-		return (void*)&f;
+	global_gif_file = filesystem.open(fname);
+	if (global_gif_file) {
+		*pSize = global_gif_file.size();
+		return (void*)&global_gif_file;
 	}
 	return NULL;
 } /* GIFOpenFile() */
@@ -501,6 +499,7 @@ void load_anim() {
 	}
 	Serial.printf("Open animation: '%s'\n", file.path());
 	display->clearScreen();
+	gif.close();
 	if (gif.open(file.path(), GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
 		Serial.print("load anim: ");
 		Serial.print(file.name());
@@ -720,7 +719,7 @@ void setup() {
 	// NimBLEDevice::setSecurityAuth(/*BLE_SM_PAIR_AUTHREQ_BOND | BLE_SM_PAIR_AUTHREQ_MITM |*/ BLE_SM_PAIR_AUTHREQ_SC);
 
 	// Create the BLE Server
-	pServer = NimBLEDevice::createServer();
+	NimBLEServer* pServer = NimBLEDevice::createServer();
 	pServer->setCallbacks(new MyServerCallbacks());
 
 	// Create the BLE Service
