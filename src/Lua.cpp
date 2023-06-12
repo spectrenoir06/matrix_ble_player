@@ -1,11 +1,11 @@
 #include <LuaWrapper.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
-#include <NimBLEDevice.h>
 #include <atomic>
 
 extern MatrixPanel_I2S_DMA *display;
 extern int sendBLE(const char*);
 extern void flip_matrix();
+
 extern int spectre_lua_plz_stop;
 
 namespace {
@@ -188,9 +188,6 @@ namespace {
 
 namespace Lua {
 
-  /**
-   * Crate task for running lua scripts.
-   */
   BaseType_t init() {
     BaseType_t ret = xTaskCreatePinnedToCore(
       runLuaTask,   /* Task function. */
@@ -205,17 +202,10 @@ namespace Lua {
     return ret;
   }
 
-  /**
-   * Kindly ask the lua interpreter to stop execution of the current script.
-   * It is safe to call this function even if no script is currently running.
-   */
   void stop() {
     spectre_lua_plz_stop = 1;
   }
 
-  /**
-   * Run the supplied script.
-   */
   void run_script(String script) {
     if (runLuaTaskHandle == NULL) {
       // could not create task for lua scripts
