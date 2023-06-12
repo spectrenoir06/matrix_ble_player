@@ -191,7 +191,7 @@ namespace Lua {
   BaseType_t init() {
     BaseType_t ret = xTaskCreatePinnedToCore(
       runLuaTask,   /* Task function. */
-      "runLuaTask", /* String with name of task. */
+      "LuaTask", /* String with name of task. */
       1024 * 20,  /* Stack size in bytes. */
       NULL,	   /* Parameter passed as input of the task */
       1,		   /* Priority of the task. */
