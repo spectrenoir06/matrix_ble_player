@@ -128,6 +128,16 @@ void print_progress(const char *str) {
 	);
 	flip_matrix();
 }
+
+void print_message(char *str) {
+	display->fillScreen(0);
+	display->setCursor(0, 0);
+	display->setTextSize(1);
+	display->setTextColor(display->color565(255,255,255));
+	display->setTextWrap(true);
+	display->print(str);
+	flip_matrix();
+}
 class MyServerCallbacks : public NimBLEServerCallbacks {
 	void onConnect(NimBLEServer* pServer, ble_gap_conn_desc *desc) {
 		deviceConnected = true;
@@ -208,6 +218,12 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 						strcat(str, "/GIF/");
 						strcat(str, data+2);
 						Serial.printf("Remove %s\n", str);
+						if (file && strcmp(file.path(), str) == 0) {
+							Serial.printf("The gif is playing\n");
+							file.close();
+							anim = ANIM_UDP;
+							// file = NULL;
+						}
 						filesystem.remove(str);
 					}
 					break;
@@ -477,14 +493,8 @@ int32_t GIFSeekFile(GIFFILE* pFile, int32_t iPosition) {
 void load_anim() {
 	if (!file) {
 		anim_on = false;
-		display->fillScreen(0);
-		display->setCursor(4, 4);
-		display->setTextSize(1);
-		display->setTextColor(display->color565(255,255,255));
-		display->printf("Can't find");
-		display->setCursor(4, 4+9);
-		display->printf("Gif!");
-		flip_matrix();
+		print_message("Can't find\nGif file!");
+		anim = ANIM_UDP;
 		return;
 	}
 	Serial.printf("Open animation: '%s'\n", file.path());
@@ -507,6 +517,7 @@ void load_anim() {
 		}
 		anim = ANIM_PLAY;
 	} else {
+		Serial.printf("Error open: '%s'\n", file.path());
 		anim = ANIM_UDP;
 	}
 
@@ -533,8 +544,10 @@ void playAnimeTask(void* parameter) {
 	File root;
 	root = filesystem.open("/GIF");
 
-	if (root) {
-		for (;;) {
+	for (;;) {
+		if (!root) {
+			print_message("Can't find\nGif folder!");
+		} else {
 			if (digitalRead(0) == LOW || next_anim) {
 				if (!button_isPress || next_anim) {
 					button_isPress = 1;
@@ -547,7 +560,6 @@ void playAnimeTask(void* parameter) {
 						root = filesystem.open("/GIF");
 						file = root.openNextFile();
 					}
-					// vTaskDelay(20 / portTICK_PERIOD_MS);
 				}
 			} else
 				button_isPress = 0;
@@ -564,10 +576,11 @@ void playAnimeTask(void* parameter) {
 					break;
 				case ANIM_UDP:
 					if (timeout_var != 0 && millis() > timeout_var) {
-						anim = ANIM_START;
+						// anim = ANIM_START;
 						image_receive_mode = false;
 						gif_receive_mode = false;
-						Serial.printf("timemout\n");
+						lua_receive_mode = false;
+						Serial.printf("timeout\n");
 						timeout_var = 0;
 					}
 					break;
@@ -646,16 +659,9 @@ void setup() {
 		SPI.begin(SD_SCK, SD_MISO, SD_MOSI);
 		for (int i=0; i<20; i++) {
 			if (!filesystem.begin(SD_CS, SPI)) {
-				Serial.println("Card Mount Failed");
 				anim_on = false;
-				display->fillScreen(0);
-				display->setCursor(4, 4);
-				display->setTextSize(1);
-				display->setTextColor(display->color565(255,255,255));
-				display->printf("Can't mnt");
-				display->setCursor(4, 4+9);
-				display->printf("SD Card!");
-				flip_matrix();
+				Serial.println("Card Mount Failed");
+				print_message("Can't mnt\nSD Card!");
 				delay(10);
 			} else {
 				anim_on = true;
@@ -670,8 +676,9 @@ void setup() {
 		pinMode(14, PULLUP);
 		pinMode(13, PULLUP);
 		if (!filesystem.begin("/sdcard", true)) {
-			Serial.println("Card Mount Failed");
 			anim_on = false;
+			Serial.println("Card Mount Failed");
+			print_message("Can't mnt\nSD Card!");
 		} else {
 			// root = filesystem.open("/");
 			// file = root.openNextFile();
@@ -681,15 +688,12 @@ void setup() {
 
 	#ifdef USE_SPIFFS
 		if (!filesystem.begin(true)) {
-			Serial.println("An Error has occurred while mounting SPIFFS");
-			// ESP.restart();
 			anim_on = false;
+			Serial.println("An Error has occurred while mounting SPIFFS");
+			print_message("Can't mnt\nSPIFFS!");
+			// ESP.restart();
 		} else {
 			Serial.println("mounting SPIFFS OK");
-			// root = filesystem.open("/");
-			// file = filesystem.open("/start.Z565", "r");
-			// if (!file.available())
-			// 	file = root.openNextFile();
 			anim_on = true;
 		}
 	#endif
@@ -728,7 +732,7 @@ void setup() {
 
 	BLECharacteristic* pRxCharacteristic = pService->createCharacteristic(
 		CHARACTERISTIC_UUID_RX,
-		NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE_NR
+		NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::READ// | NIMBLE_PROPERTY::WRITE_NR
 	);
 
 	pRxCharacteristic->setCallbacks(new MyCallbacks());
