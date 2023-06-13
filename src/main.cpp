@@ -111,6 +111,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 }
 
 
+uint16_t hue = 0;
 
 void print_progress(const char *str) {
 	display->fillScreen(0);
@@ -119,12 +120,16 @@ void print_progress(const char *str) {
 	display->setTextColor(display->color565(255,255,255));
 	display->printf(str);
 	display->fillRect(4, 16, 64 - 4 * 2, 8, 0xFFFF);
+	CRGB rgb;
+	CHSV hsv(hue+=8, 255, 255);
+	hsv2rgb_rainbow(hsv, rgb);
+	// hsv2rgb_spectrum(CHSV(hue+=5, 255, 255), rgb);
 	display->fillRect(
 		4+1,
 		16+1,
 		map(byte_to_store, 0, data_size, 0, (64 - 4 * 2 - 2)),
 		8 - 2,
-		display->color444(0, 0x7b, 0xFF)
+		display->color565(rgb.r, rgb.g, rgb.b)
 	);
 	flip_matrix();
 }
