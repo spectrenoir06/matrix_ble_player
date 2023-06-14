@@ -1,3 +1,18 @@
+#ifdef USE_SD
+	#include "FS.h"
+	#include "SD.h"
+	#include "SPI.h"
+	#define filesystem SD
+#endif
+#ifdef USE_SD_MMC
+	#include "FS.h"
+	#include "SD_MMC.h"
+	#define filesystem SD_MMC
+#endif
+#ifdef USE_SPIFFS
+	#include "SPIFFS.h"
+	#define filesystem SPIFFS
+#endif
 #include <AnimatedGIF.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <NimBLEDevice.h>
@@ -16,22 +31,6 @@ const int SD_SCK = 14;
 const int SD_MISO = 2;
 
 MatrixPanel_I2S_DMA *display = nullptr;
-
-#ifdef USE_SD
-	#include "FS.h"
-	#include "SD.h"
-	#include "SPI.h"
-	#define filesystem SD
-#endif
-#ifdef USE_SD_MMC
-	#include "FS.h"
-	#include "SD_MMC.h"
-	#define filesystem SD_MMC
-#endif
-#ifdef USE_SPIFFS
-	#include "SPIFFS.h"
-	#define filesystem SPIFFS
-#endif
 
 enum ANIM {
 	ANIM_UDP = 0,
@@ -121,9 +120,7 @@ void print_progress(const char *str) {
 	display->printf(str);
 	display->fillRect(4, 16, 64 - 4 * 2, 8, 0xFFFF);
 	CRGB rgb;
-	CHSV hsv(hue+=8, 255, 255);
-	hsv2rgb_rainbow(hsv, rgb);
-	// hsv2rgb_spectrum(CHSV(hue+=5, 255, 255), rgb);
+	hsv2rgb_spectrum(CHSV(hue+10, 255, 255), rgb);
 	display->fillRect(
 		4+1,
 		16+1,

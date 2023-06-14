@@ -135,22 +135,22 @@ namespace {
 
   void lua_exec() {
     LuaWrapper lua;
-    lua.Lua_register("clearDisplay", (const lua_CFunction) &lua_wrapper_clearDisplay);
-    lua.Lua_register("updateDisplay", (const lua_CFunction) &lua_wrapper_updateDisplay);
-    lua.Lua_register("drawPixel", (const lua_CFunction) &lua_wrapper_drawPixel);
-    lua.Lua_register("fillRect", (const lua_CFunction) &lua_wrapper_fillRect);
-    lua.Lua_register("colorWheel", (const lua_CFunction) &lua_wrapper_colorWheel);
+    lua.Lua_register("clearDisplay",   (const lua_CFunction) &lua_wrapper_clearDisplay);
+    lua.Lua_register("updateDisplay",  (const lua_CFunction) &lua_wrapper_updateDisplay);
+    lua.Lua_register("drawPixel",      (const lua_CFunction) &lua_wrapper_drawPixel);
+    lua.Lua_register("fillRect",       (const lua_CFunction) &lua_wrapper_fillRect);
+    lua.Lua_register("colorWheel",     (const lua_CFunction) &lua_wrapper_colorWheel);
 
-    lua.Lua_register("delay", (const lua_CFunction) &lua_wrapper_delay);
-    lua.Lua_register("millis", (const lua_CFunction) &lua_wrapper_millis);
+    lua.Lua_register("delay",          (const lua_CFunction) &lua_wrapper_delay);
+    lua.Lua_register("millis",         (const lua_CFunction) &lua_wrapper_millis);
 
-    lua.Lua_register("setTextColor", (const lua_CFunction) &lua_wrapper_setTextColor);
-    lua.Lua_register("setTextWrap", (const lua_CFunction) &lua_wrapper_setTextWrap);
-    lua.Lua_register("printText", (const lua_CFunction) &lua_wrapper_printText);
-    lua.Lua_register("setCursor", (const lua_CFunction) &lua_wrapper_setCursor);
-    lua.Lua_register("setTextSize", (const lua_CFunction) &lua_wrapper_setTextSize);
+    lua.Lua_register("setTextColor",   (const lua_CFunction) &lua_wrapper_setTextColor);
+    lua.Lua_register("setTextWrap",    (const lua_CFunction) &lua_wrapper_setTextWrap);
+    lua.Lua_register("printText",      (const lua_CFunction) &lua_wrapper_printText);
+    lua.Lua_register("setCursor",      (const lua_CFunction) &lua_wrapper_setCursor);
+    lua.Lua_register("setTextSize",    (const lua_CFunction) &lua_wrapper_setTextSize);
     
-    lua.Lua_register("printBLE", (const lua_CFunction) &lua_wrapper_printBLE);
+    lua.Lua_register("printBLE",       (const lua_CFunction) &lua_wrapper_printBLE);
     
     Serial.println("Start task runLuaTask");
     String* str = current_lua_script.exchange(nullptr, std::memory_order_acq_rel);
