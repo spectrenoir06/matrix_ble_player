@@ -32,15 +32,6 @@ const int SD_MISO = 2;
 
 MatrixPanel_I2S_DMA *display = nullptr;
 
-enum ANIM {
-	ANIM_UDP = 0,
-	ANIM_START = 1,
-	ANIM_PLAY = 2
-};
-
-uint8_t anim_on = false;
-// static TaskHandle_t animeTaskHandle = NULL;
-
 uint8_t next_anim = 1;
 
 char	hostname[50] = DEFAULT_HOSTNAME;
@@ -364,7 +355,6 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 void load_anim(File file) {
 	Serial.printf("load_anim !\n");
 	if (!file) {
-		anim_on = false;
 		print_message("Can't find\nGif file!");
 		return;
 	}
@@ -500,12 +490,10 @@ void setup() {
 		SPI.begin(SD_SCK, SD_MISO, SD_MOSI);
 		for (int i=0; i<20; i++) {
 			if (!filesystem.begin(SD_CS, SPI)) {
-				anim_on = false;
 				Serial.println("Card Mount Failed");
 				print_message("Can't mnt\nSD Card!");
 				delay(10);
 			} else {
-				anim_on = true;
 				break;
 			}
 		}
@@ -517,25 +505,21 @@ void setup() {
 		pinMode(14, PULLUP);
 		pinMode(13, PULLUP);
 		if (!filesystem.begin("/sdcard", true)) {
-			anim_on = false;
 			Serial.println("Card Mount Failed");
 			print_message("Can't mnt\nSD Card!");
 		} else {
 			// root = filesystem.open("/");
 			// file = root.openNextFile();
-			anim_on = true;
 		}
 	#endif
 
 	#ifdef USE_SPIFFS
 		if (!filesystem.begin(true)) {
-			anim_on = false;
 			Serial.println("An Error has occurred while mounting SPIFFS");
 			print_message("Can't mnt\nSPIFFS!");
 			// ESP.restart();
 		} else {
 			Serial.println("mounting SPIFFS OK");
-			anim_on = true;
 		}
 	#endif
 
