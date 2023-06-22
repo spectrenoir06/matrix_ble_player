@@ -164,6 +164,7 @@ namespace {
       // next frame
       t = millis();
       if (t < next_frame_millis) continue;
+      display->clearScreen();
       if (gif.playFrame(false, &i)) {
         next_frame_millis = t + i;
         flip_matrix();

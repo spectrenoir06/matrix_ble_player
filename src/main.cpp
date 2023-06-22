@@ -271,7 +271,20 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 						time_reveice = millis();
 					}
 					break;
+				case 'E':
+					{
+						const char* data = rxValue.c_str();
+						brightness = atoi(data+2);
+						set_brightness(brightness);
+					}
+					break;
 				default:
+					{
+						Serial.printf("default switch\n");
+						for (int i = 0; i < rxValue.length(); i++)
+							Serial.print(rxValue[i]);
+						Serial.println();
+					}
 					break;
 			}
 		}
@@ -387,7 +400,7 @@ void playAnimeTask(void* parameter) {
 	root = filesystem.open("/GIF");
 
 	for (;;) {
-		Serial.printf("loop %s \n", root.path());
+		//Serial.printf("loop %s \n", root.path());
 		vTaskDelay(1 / portTICK_PERIOD_MS);
 		if (!root) {
 			print_message("Can't find\nGif folder!");
