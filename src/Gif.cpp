@@ -39,6 +39,9 @@ namespace {
     if (iWidth > MATRIX_WIDTH)
       iWidth = MATRIX_WIDTH;
 
+    int off_x = (MATRIX_WIDTH  - pDraw->iWidth )/2;
+    int off_y = (MATRIX_HEIGHT - pDraw->iHeight)/2;
+
     usPalette = pDraw->pPalette;
     y = pDraw->iY + pDraw->y; // current line
 
@@ -71,7 +74,7 @@ namespace {
         }             // while looking for opaque pixels
         if (iCount) { // any opaque pixels?
           for (int xOffset = 0; xOffset < iCount; xOffset++) {
-            display->drawPixel(x + xOffset, y, usTemp[xOffset]); // 565 Color Format
+            display->drawPixel(off_x + x + xOffset, off_y + y, usTemp[xOffset]); // 565 Color Format
           }
           x += iCount;
           iCount = 0;
@@ -95,7 +98,7 @@ namespace {
       s = pDraw->pPixels;
       // Translate the 8-bit pixels through the RGB565 palette (already byte reversed)
       for (int x = 0; x < pDraw->iWidth; x++) {
-        display->drawPixel(x, y, usPalette[*s++]); // color 565
+        display->drawPixel(off_x + x, off_y + y, usPalette[*s++]); // color 565
       }
     }
   }

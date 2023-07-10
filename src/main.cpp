@@ -4,11 +4,6 @@
 	#include "SPI.h"
 	#define filesystem SD
 #endif
-#ifdef USE_SD_MMC
-	#include "FS.h"
-	#include "SD_MMC.h"
-	#define filesystem SD_MMC
-#endif
 #ifdef USE_SPIFFS
 	#include "SPIFFS.h"
 	#define filesystem SPIFFS
@@ -25,10 +20,12 @@
 #define DEFAULT_HOSTNAME	HOSTNAME
 #define AP_SSID				HOSTNAME
 
-const int SD_CS = 13;
-const int SD_MOSI = 15;
-const int SD_SCK = 14;
-const int SD_MISO = 2;
+#ifdef USE_SD
+	const int SD_CS   = SD_CS_PIN;
+	const int SD_SCK  = SD_SCK_PIN;
+	const int SD_MOSI = SD_MOSI_PIN;
+	const int SD_MISO = SD_MISO_PIN;
+#endif
 
 MatrixPanel_I2S_DMA *display = nullptr;
 
@@ -59,10 +56,6 @@ int timeout_var = 0;
 int time_reveice = 0;
 String lua_script = "";
 uint8_t list_send_mode = false;
-
-float gif_scale;
-int gif_off_x;
-int gif_off_y;
 
 uint8_t button_isPress = 0;
 
@@ -310,15 +303,17 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 
 		if (image_receive_mode) {
 			Serial.printf("Byte receive: %d, wait: %d\n", byte_to_store, data_size - byte_to_store);
+			int off_x = (MATRIX_WIDTH  - img_receive_width )/2;
+			int off_y = (MATRIX_HEIGHT - img_receive_height)/2;
 			timeout_var = millis() + timeout_time;
 			if (byte_to_store >= data_size) {
 				Serial.printf("Image complete\n");
 				display->fillScreenRGB888(0, 0, 0);
 				for (int i = 0; i < (img_receive_width * img_receive_height); i++) {
 					if (img_receive_color_depth == 16)
-						display->drawPixel((i) % img_receive_width, (i) / img_receive_width, leds[i * 2] + (leds[i * 2 + 1] << 8));
+						display->drawPixel(off_x + (i) % img_receive_width, off_y + (i) / img_receive_width, leds[i * 2] + (leds[i * 2 + 1] << 8));
 					else
-						display->drawPixelRGB888((i) % img_receive_width, (i) / img_receive_width, leds[i*3], leds[i*3+1], leds[i*3+2]);
+						display->drawPixelRGB888(off_x + (i) % img_receive_width, off_y + (i) / img_receive_width, leds[i * 3], leds[i * 3 + 1], leds[i * 3 + 2]);
 				}
 				flip_matrix();
 				image_receive_mode = false;
@@ -358,7 +353,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 				Lua::run_script(lua_script);
 			}
 			else {
-				print_progress("load lua:");
+				// print_progress("load lua:");
 			}
 		}
 	}
@@ -369,6 +364,7 @@ void load_anim(File file) {
 	Serial.printf("load_anim !\n");
 	if (!file) {
 		print_message("Can't find\nGif file!");
+		delay(1000);
 		return;
 	}
 	Serial.printf("Open animation: '%s'\n", file.path());
@@ -404,6 +400,7 @@ void playAnimeTask(void* parameter) {
 		vTaskDelay(1 / portTICK_PERIOD_MS);
 		if (!root) {
 			print_message("Can't find\nGif folder!");
+			vTaskDelay(1000 / portTICK_PERIOD_MS);
 		}
 		if (gif_receive_mode) {
 			// Check for timeouts
@@ -485,8 +482,6 @@ void setup() {
 	);
 
 	mxconfig.double_buff = true;                   // use DMA double buffer (twice as much RAM required)
-	// #ifndef DMA_DOUBLE_BUFF
-	// #endif
 	mxconfig.driver          = HUB75_I2S_CFG::SHIFTREG; // Matrix driver chip type - default is a plain shift register
 	mxconfig.i2sspeed        = HUB75_I2S_CFG::HZ_10M;   // I2S clock speed
 	mxconfig.clkphase        = true;                    // I2S clock phase
@@ -512,20 +507,6 @@ void setup() {
 		}
 	#endif
 
-	#ifdef USE_SD_MMC
-		pinMode(2, INPUT_PULLUP);
-		pinMode(15, PULLUP);
-		pinMode(14, PULLUP);
-		pinMode(13, PULLUP);
-		if (!filesystem.begin("/sdcard", true)) {
-			Serial.println("Card Mount Failed");
-			print_message("Can't mnt\nSD Card!");
-		} else {
-			// root = filesystem.open("/");
-			// file = root.openNextFile();
-		}
-	#endif
-
 	#ifdef USE_SPIFFS
 		if (!filesystem.begin(true)) {
 			Serial.println("An Error has occurred while mounting SPIFFS");
@@ -535,16 +516,6 @@ void setup() {
 			Serial.println("mounting SPIFFS OK");
 		}
 	#endif
-
-	// xTaskCreatePinnedToCore(
-	// 	playAnimeTask,   /* Task function. */
-	// 	"playAnimeTask", /* String with name of task. */
-	// 	4096,  /* Stack size in bytes. */
-	// 	NULL,	   /* Parameter passed as input of the task */
-	// 	5,		   /* Priority of the task. */
-	// 	&animeTaskHandle,	   /* Task handle. */
-	// 	1
-	// );
 
 	Serial.println("Start BLE");
 	// Create the BLE Device

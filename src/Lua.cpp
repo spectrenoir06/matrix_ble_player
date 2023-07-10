@@ -133,6 +133,12 @@ namespace {
     return 0;
   }
 
+  static int lua_wrapper_getMatrix(lua_State *lua_state) {
+    lua_pushinteger(lua_state, (lua_Integer)MATRIX_WIDTH);
+    lua_pushinteger(lua_state, (lua_Integer)MATRIX_HEIGHT);
+    return 2;
+  }
+
   void lua_exec() {
     LuaWrapper lua;
     lua.Lua_register("clearDisplay",   (const lua_CFunction) &lua_wrapper_clearDisplay);
@@ -151,6 +157,7 @@ namespace {
     lua.Lua_register("setTextSize",    (const lua_CFunction) &lua_wrapper_setTextSize);
     
     lua.Lua_register("printBLE",       (const lua_CFunction) &lua_wrapper_printBLE);
+    lua.Lua_register("getMatrix",      (const lua_CFunction) &lua_wrapper_getMatrix);
     
     Serial.println("Start task runLuaTask");
     String* str = current_lua_script.exchange(nullptr, std::memory_order_acq_rel);
