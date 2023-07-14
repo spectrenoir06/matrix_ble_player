@@ -1,10 +1,12 @@
 #include <LuaWrapper.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <atomic>
+#include <Mapping.h>
 
 extern MatrixPanel_I2S_DMA *display;
 extern int sendBLE(const char*);
 extern void flip_matrix();
+extern VirtualMatrixPanel *virtualDisp;
 
 extern int spectre_lua_plz_stop;
 
@@ -24,7 +26,7 @@ namespace {
     int r = luaL_checkinteger(lua_state, 3);
     int g = luaL_checkinteger(lua_state, 4);
     int b = luaL_checkinteger(lua_state, 5);
-    display->drawPixelRGB888(x, y, r, g, b);
+    virtualDisp->drawPixelRGB888(x, y, r, g, b);
     return 0;
   }
 
@@ -56,7 +58,7 @@ namespace {
   }
 
   static int lua_wrapper_clearDisplay(lua_State *lua_state) {
-    display->clearScreen();
+    virtualDisp->clearScreen();
     return 0;
   }
 
@@ -64,27 +66,27 @@ namespace {
     int r = luaL_checkinteger(lua_state, 1);
     int g = luaL_checkinteger(lua_state, 2);
     int b = luaL_checkinteger(lua_state, 3);
-    display->setTextColor(display->color565(r,g,b));
+    virtualDisp->setTextColor(virtualDisp->color565(r,g,b));
     return 0;
   }
 
   static int lua_wrapper_printText(lua_State *lua_state) {
     size_t len = 0;
     const char *str = luaL_checklstring(lua_state, 1, &len);
-    display->print(str);
+    virtualDisp->print(str);
     return 0;
   }
 
   static int lua_wrapper_setCursor(lua_State *lua_state) {
     int x = luaL_checkinteger(lua_state, 1);
     int y = luaL_checkinteger(lua_state, 2);
-    display->setCursor(x,y);
+    virtualDisp->setCursor(x,y);
     return 0;
   }
 
   static int lua_wrapper_setTextSize(lua_State *lua_state) {
     int size = luaL_checkinteger(lua_state, 1);
-    display->setTextSize(size);
+    virtualDisp->setTextSize(size);
     return 0;
   }
 
@@ -98,7 +100,7 @@ namespace {
     int r = luaL_checkinteger(lua_state, 5);
     int g = luaL_checkinteger(lua_state, 6);
     int b = luaL_checkinteger(lua_state, 7);
-    display->fillRect(x, y, w, h, r, g, b);
+    virtualDisp->fillRect(x, y, w, h, r, g, b);
     return 0;
   }
 
@@ -129,17 +131,23 @@ namespace {
 
   static int lua_wrapper_setTextWrap(lua_State *lua_state) {
     if (lua_isboolean(lua_state, 1))
-      display->setTextWrap(lua_toboolean(lua_state, 1));
+      virtualDisp->setTextWrap(lua_toboolean(lua_state, 1));
     return 0;
   }
 
   static int lua_wrapper_getMatrix(lua_State *lua_state) {
-    lua_pushinteger(lua_state, (lua_Integer)MATRIX_WIDTH);
-    lua_pushinteger(lua_state, (lua_Integer)MATRIX_HEIGHT);
+    lua_pushinteger(lua_state, (lua_Integer)V_MATRIX_WIDTH);
+    lua_pushinteger(lua_state, (lua_Integer)V_MATRIX_HEIGHT);
     return 2;
   }
 
   void lua_exec() {
+
+    display->clearScreen();
+    display->flipDMABuffer();
+    display->clearScreen();
+    display->flipDMABuffer();
+
     LuaWrapper lua;
     lua.Lua_register("clearDisplay",   (const lua_CFunction) &lua_wrapper_clearDisplay);
     lua.Lua_register("updateDisplay",  (const lua_CFunction) &lua_wrapper_updateDisplay);

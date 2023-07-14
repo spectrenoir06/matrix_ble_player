@@ -1,3 +1,6 @@
+#include <Mapping.h>
+
+
 #ifdef USE_SD
 	#include "FS.h"
 	#include "SD.h"
@@ -12,6 +15,9 @@
 #include <NimBLEDevice.h>
 #include "Gif.hpp"
 #include "Lua.hpp"
+
+#define LED_SIZE 3
+#define LED_TOTAL (MATRIX_WIDTH*V_MATRIX_HEIGHT)
 
 #define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -58,6 +64,8 @@ String lua_script = "";
 uint8_t list_send_mode = false;
 
 uint8_t button_isPress = 0;
+VirtualMatrixPanel  *virtualDisp = nullptr;
+uint8_t is_fs_mnt = false;
 
 int sendBLE(const char *cstr) {
 	if (deviceConnected) {
@@ -87,32 +95,34 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 uint16_t hue = 0;
 
 void print_progress(const char *str) {
-	display->fillScreen(0);
-	display->setCursor(4, 4);
-	display->setTextSize(1);
-	display->setTextColor(display->color565(255,255,255));
-	display->printf(str);
-	display->fillRect(4, 16, 64 - 4 * 2, 8, 0xFFFF);
+	virtualDisp->clearScreen();
+	virtualDisp->setCursor(4, V_MATRIX_HEIGHT / 2 - 14);
+	virtualDisp->setTextSize(1);
+	virtualDisp->setTextColor(display->color565(255,255,255));
+	virtualDisp->printf(str);
+	virtualDisp->fillRect(4, V_MATRIX_HEIGHT/2, V_MATRIX_WIDTH - 4 * 2, 8, 255, 255, 255);
 	CRGB rgb;
 	hsv2rgb_spectrum(CHSV(hue+10, 255, 255), rgb);
-	display->fillRect(
+	virtualDisp->fillRect(
 		4+1,
-		16+1,
-		map(byte_to_store, 0, data_size, 0, (64 - 4 * 2 - 2)),
+		(V_MATRIX_HEIGHT/2)+1,
+		map(byte_to_store, 0, data_size, 0, ((V_MATRIX_WIDTH) - 4 * 2 - 2)),
 		8 - 2,
-		display->color565(rgb.r, rgb.g, rgb.b)
+		rgb.r,
+		rgb.g,
+		rgb.b
 	);
 	flip_matrix();
 }
 
 void print_message(const char *str) {
 	Serial.printf("print_message: %s", str);
-	display->fillScreen(0);
-	display->setCursor(0, 0);
-	display->setTextSize(1);
-	display->setTextColor(display->color565(255,255,255));
-	display->setTextWrap(true);
-	display->print(str);
+	virtualDisp->clearScreen();
+	virtualDisp->setCursor(0, V_MATRIX_HEIGHT/2-16);
+	virtualDisp->setTextSize(1);
+	virtualDisp->setTextColor(virtualDisp->color565(255,255,255));
+	virtualDisp->setTextWrap(true);
+	virtualDisp->print(str);
 	flip_matrix();
 }
 class MyServerCallbacks : public NimBLEServerCallbacks {
@@ -393,13 +403,15 @@ void load_anim(File file) {
 
 void playAnimeTask(void* parameter) {
 	File root;
+	if (!is_fs_mnt)
+		return;
 	root = filesystem.open("/GIF");
 
 	for (;;) {
 		//Serial.printf("loop %s \n", root.path());
 		vTaskDelay(1 / portTICK_PERIOD_MS);
 		if (!root) {
-			print_message("Can't find\nGif folder!");
+			print_message("Can't find\nGif folder!\n");
 			vTaskDelay(1000 / portTICK_PERIOD_MS);
 		}
 		if (gif_receive_mode) {
@@ -475,21 +487,32 @@ void setup() {
 	HUB75_I2S_CFG::i2s_pins _pins = {R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN};
 	
 	HUB75_I2S_CFG mxconfig(
-		MATRIX_W,     // Module width
-		MATRIX_H,     // Module height
-		MATRIX_CHAIN, // chain length
-		_pins         // pin mapping
+		MATRIX_WIDTH,     // Module width
+		MATRIX_HEIGHT,    // Module height
+		MATRIX_CHAIN,     // chain length
+		_pins             // pin mapping
 	);
 
-	mxconfig.double_buff = true;                   // use DMA double buffer (twice as much RAM required)
+	mxconfig.double_buff     = true;                    // use DMA double buffer (twice as much RAM required)
 	mxconfig.driver          = HUB75_I2S_CFG::SHIFTREG; // Matrix driver chip type - default is a plain shift register
-	mxconfig.i2sspeed        = HUB75_I2S_CFG::HZ_10M;   // I2S clock speed
-	mxconfig.clkphase        = true;                    // I2S clock phase
-	mxconfig.latch_blanking  = MATRIX_LATCH_BLANK;      // How many clock cycles to blank OE before/after LAT signal change, default is 1 clock
+	mxconfig.i2sspeed        = HUB75_I2S_CFG::HZ_20M;   // I2S clock speed
+	mxconfig.clkphase        = false;                   // I2S clock phase
+	mxconfig.latch_blanking  = 1;                       // How many clock cycles to blank OE before/after LAT signal change, default is 1 clock
 
 	display = new MatrixPanel_I2S_DMA(mxconfig);
 
 	display->begin();  // setup display with pins as pre-defined in the library
+
+		virtualDisp = nullptr;
+
+		int16_t map[3*3] = {
+			-1, 4, -1,
+			1,  2,  3,
+			-1, 0, -1
+		};
+
+		virtualDisp = new VirtualMatrixPanel((*display), 3, 3, 32, 32, map);
+
 
 	set_brightness(BRIGHTNESS);
 
@@ -499,9 +522,10 @@ void setup() {
 		for (int i=0; i<20; i++) {
 			if (!filesystem.begin(SD_CS, SPI)) {
 				Serial.println("Card Mount Failed");
-				print_message("Can't mnt\nSD Card!");
+				print_message("Can't mnt\nSD Card!\n");
 				delay(10);
 			} else {
+				is_fs_mnt = 1;
 				break;
 			}
 		}
@@ -514,6 +538,7 @@ void setup() {
 			// ESP.restart();
 		} else {
 			Serial.println("mounting SPIFFS OK");
+			is_fs_mnt = 1;
 		}
 	#endif
 
