@@ -154,6 +154,10 @@ namespace {
           if(gif.open(fp, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
             spectre_gif_plz_stop = 0;
             next_frame_millis = 0;
+            // clear both buffers
+            display->clearScreen();
+            flip_matrix();
+            display->clearScreen();
           } else {
             // error
             spectre_gif_plz_stop = 1;
@@ -164,12 +168,12 @@ namespace {
       // next frame
       t = millis();
       if (t < next_frame_millis) continue;
-      display->clearScreen();
       if (!gif.playFrame(false, &i)) {
         gif.reset();
       }
       next_frame_millis = t + i;
       flip_matrix();
+      // TODO: copy front buffer into back buffer
     }
   }
 
