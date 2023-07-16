@@ -14,7 +14,6 @@
 #define filesystem SPIFFS
 #endif
 
-extern MatrixPanel_I2S_DMA *display;
 extern VirtualMatrixPanel *virtualDisp;
 extern void flip_matrix();
 
@@ -155,9 +154,9 @@ namespace {
             spectre_gif_plz_stop = 0;
             next_frame_millis = 0;
             // clear both buffers
-            display->clearScreen();
+            virtualDisp->clearScreen();
             flip_matrix();
-            display->clearScreen();
+            virtualDisp->clearScreen();
           } else {
             // error
             spectre_gif_plz_stop = 1;
