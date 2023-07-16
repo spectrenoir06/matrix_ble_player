@@ -503,15 +503,18 @@ void setup() {
 
 	display->begin();  // setup display with pins as pre-defined in the library
 
-		virtualDisp = nullptr;
-
+	#ifdef IS_CROSS
 		int16_t map[3*3] = {
 			-1, 4, -1,
 			1,  2,  3,
 			-1, 0, -1
 		};
-
 		virtualDisp = new VirtualMatrixPanel((*display), 3, 3, 32, 32, map);
+	#else
+		int16_t map[1] = {0};
+		virtualDisp = new VirtualMatrixPanel((*display), 1, 1, 64, 32, map);
+	#endif
+
 
 
 	set_brightness(BRIGHTNESS);

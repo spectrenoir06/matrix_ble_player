@@ -121,7 +121,6 @@ inline VirtualCoords VirtualMatrixPanel::getCoords(int16_t virt_x, int16_t virt_
     uint16_t py =  virt_y / panelResY;
 
     int16_t panel = map[px][py];
-    // Serial.printf("Panel[%d][%d] = %d\n", px, py, panel);
 
     if (panel != -1) {
         coords.x = (panel * panelResX) + (virt_x%panelResX);
