@@ -62,6 +62,14 @@ namespace {
     return 0;
   }
 
+  static int lua_wrapper_fillDisplay(lua_State *lua_state) {
+    int r = luaL_checkinteger(lua_state, 1);
+    int g = luaL_checkinteger(lua_state, 2);
+    int b = luaL_checkinteger(lua_state, 3);
+    virtualDisp->fillScreenRGB888(r, g, b);
+    return 0;
+  }
+
   static int lua_wrapper_setTextColor(lua_State *lua_state) {
     int r = luaL_checkinteger(lua_state, 1);
     int g = luaL_checkinteger(lua_state, 2);
@@ -150,6 +158,7 @@ namespace {
 
     LuaWrapper lua;
     lua.Lua_register("clearDisplay",   (const lua_CFunction) &lua_wrapper_clearDisplay);
+    lua.Lua_register("fillDisplay",    (const lua_CFunction) &lua_wrapper_fillDisplay);
     lua.Lua_register("updateDisplay",  (const lua_CFunction) &lua_wrapper_updateDisplay);
     lua.Lua_register("drawPixel",      (const lua_CFunction) &lua_wrapper_drawPixel);
     lua.Lua_register("fillRect",       (const lua_CFunction) &lua_wrapper_fillRect);
