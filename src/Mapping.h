@@ -77,6 +77,8 @@ public:
 
     void flipDMABuffer() { display->flipDMABuffer(); }
 
+    void copyDMABuffer() { display->copyDMABuffer(); }
+
 private:
     MatrixPanel_I2S_DMA *display;
 

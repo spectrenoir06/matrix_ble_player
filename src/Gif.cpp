@@ -172,7 +172,8 @@ namespace {
       }
       next_frame_millis = t + i;
       flip_matrix();
-      // TODO: copy front buffer into back buffer
+      // copy front buffer into back buffer
+      virtualDisp->copyDMABuffer();
     }
   }
 
