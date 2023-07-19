@@ -19,7 +19,6 @@ extern void flip_matrix();
 
 namespace {
   static AnimatedGIF gif;
-  static TaskHandle_t task = NULL;
   static File current_gif_file;
   static uint32_t next_frame_millis = 0;
   static int spectre_gif_plz_stop = 1;
@@ -151,7 +150,7 @@ namespace SpectreGif {
     spectre_gif_plz_stop = 0;
   }
 
-  uint8_t init() {
+  void init() {
     gif.begin(LITTLE_ENDIAN_PIXELS);
   }
 

@@ -39,8 +39,7 @@ uint8_t next_anim = 1;
 
 char	hostname[50] = DEFAULT_HOSTNAME;
 
-uint8_t* leds;
-uint8_t* buffer;
+uint8_t* img_buffer = NULL;
 uint8_t brightness = BRIGHTNESS;
 
 NimBLECharacteristic* pTxCharacteristic;
@@ -102,7 +101,7 @@ void print_progress(const char *str) {
 	virtualDisp->printf(str);
 	virtualDisp->fillRect(4, V_MATRIX_HEIGHT/2, V_MATRIX_WIDTH - 4 * 2, 8, 255, 255, 255);
 	CRGB rgb;
-	hsv2rgb_spectrum(CHSV(hue+10, 255, 255), rgb);
+	hsv2rgb_spectrum(CHSV(hue+=10, 255, 255), rgb);
 	virtualDisp->fillRect(
 		4+1,
 		(V_MATRIX_HEIGHT/2)+1,
@@ -189,8 +188,16 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 						image_receive_mode = true;
 						byte_to_store = 0;
 						data_size = img_receive_width * img_receive_height * (img_receive_color_depth / 8);
+						if (img_buffer)
+							free(img_buffer);
+						img_buffer = (uint8_t*)malloc(data_size+1);
+						if (!img_buffer) {
+							print_message("not enought ram\n");
+							break;
+						}
+
 						for (int i = 7; i < rxValue.length(); i++) {
-							leds[byte_to_store++] = rxValue[i];
+							img_buffer[byte_to_store++] = rxValue[i];
 
 						}
 						timeout_var = millis() + timeout_time;
@@ -294,7 +301,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 		else if (image_receive_mode) {
 			for (int i = 0; i < rxValue.length(); i++) {
 				if (byte_to_store < (LED_TOTAL * LED_SIZE))
-					leds[byte_to_store] = rxValue[i];
+					img_buffer[byte_to_store] = rxValue[i];
 				byte_to_store++;
 			}
 		}
@@ -321,11 +328,12 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 				display->fillScreenRGB888(0, 0, 0);
 				for (int i = 0; i < (img_receive_width * img_receive_height); i++) {
 					if (img_receive_color_depth == 16)
-						display->drawPixel(off_x + (i) % img_receive_width, off_y + (i) / img_receive_width, leds[i * 2] + (leds[i * 2 + 1] << 8));
+						display->drawPixel(off_x + (i) % img_receive_width, off_y + (i) / img_receive_width, img_buffer[i * 2] + (img_buffer[i * 2 + 1] << 8));
 					else
-						display->drawPixelRGB888(off_x + (i) % img_receive_width, off_y + (i) / img_receive_width, leds[i * 3], leds[i * 3 + 1], leds[i * 3 + 2]);
+						display->drawPixelRGB888(off_x + (i) % img_receive_width, off_y + (i) / img_receive_width, img_buffer[i * 3], img_buffer[i * 3 + 1], img_buffer[i * 3 + 2]);
 				}
 				flip_matrix();
+				free(img_buffer);
 				image_receive_mode = false;
 				timeout_var = 0;
 			}
@@ -421,9 +429,11 @@ void playAnimeTask(void* parameter) {
 			if (timeout_var != 0 && millis() > timeout_var) {
 				image_receive_mode = false;
 				gif_receive_mode = false;
-				Serial.printf("timemout\n");
+				Serial.printf("timeout\n");
 				timeout_var = 0;
 				next_anim = 1;
+				if (img_buffer)
+					free(img_buffer);
 			}
 		}
 
@@ -479,10 +489,6 @@ void setup() {
 	Serial.print("  Main code running on core ");
 	Serial.println(core);
 	Serial.println("------------------------------");
-
-	leds = (uint8_t*)malloc(LED_TOTAL * LED_SIZE);
-	if (!leds)
-		Serial.println("Can't allocate leds");
 
 	Serial.println("LEDs driver start");
 
