@@ -198,32 +198,12 @@ namespace {
     }
   }
 
-  void runLuaTask(void* parameter) {
-    // Infinite loop :-)
-    for(;;) {
-      if (current_lua_script.load() != nullptr) {
-        lua_exec();
-      }
-      vTaskDelay(1 / portTICK_PERIOD_MS);
-    };
-  }
-
 }
 
 namespace Lua {
 
-  BaseType_t init() {
-    BaseType_t ret = xTaskCreatePinnedToCore(
-      runLuaTask,   /* Task function. */
-      "LuaTask", /* String with name of task. */
-      1024 * 20,  /* Stack size in bytes. */
-      NULL,	   /* Parameter passed as input of the task */
-      1,		   /* Priority of the task. */
-      &runLuaTaskHandle,	   /* Task handle. */
-      1
-    );
-    Serial.printf("xTaskCreatePinnedToCore returned %d\n", ret);
-    return ret;
+  void init() {
+    return;
   }
 
   void stop() {
@@ -243,6 +223,12 @@ namespace Lua {
     str = current_lua_script.exchange(str, std::memory_order_acq_rel);
     if (str != nullptr) {
       delete str;
+    }
+  }
+
+  void loop() {
+    if (current_lua_script.load() != nullptr) {
+      lua_exec();
     }
   }
 

@@ -5,7 +5,7 @@ namespace Lua {
   /**
    * Crate task for running lua scripts.
    */
-  BaseType_t init();
+  void init();
 
   /**
    * Kindly ask the lua interpreter to stop execution of the current script.
@@ -18,5 +18,7 @@ namespace Lua {
    * If another script is running, it will stopped first.
    */
   void run_script(String script);
+
+  void loop();
 
 }
