@@ -137,6 +137,45 @@ namespace {
     return pFile->iPos;
   }
 
+  void gifTask(void *parameter) {
+    int t, i;
+    for (;;) {
+      vTaskDelay(1 / portTICK_PERIOD_MS);
+      if (spectre_gif_plz_stop) continue;
+      if (next_gif_file.load() != nullptr) {
+        char* fp = next_gif_file.exchange(nullptr, std::memory_order_acq_rel);
+        if (fp != nullptr) {
+          if (current_gif_file) { // close old gif file
+            current_gif_file.close();
+          }
+          // fp will be freed by GIFOpenFile
+          if(gif.open(fp, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
+            spectre_gif_plz_stop = 0;
+            next_frame_millis = 0;
+            // clear both buffers
+            virtualDisp->clearScreen();
+            flip_matrix();
+            virtualDisp->clearScreen();
+          } else {
+            // error
+            spectre_gif_plz_stop = 1;
+            continue;
+          }
+        }
+      }
+      // next frame
+      t = millis();
+      if (t < next_frame_millis) continue;
+      if (!gif.playFrame(false, &i)) {
+        gif.reset();
+      }
+      next_frame_millis = t + i;
+      flip_matrix();
+      // copy front buffer into back buffer
+      virtualDisp->copyDMABuffer();
+    }
+  }
+
 }
 
 namespace SpectreGif {
@@ -152,6 +191,13 @@ namespace SpectreGif {
 
   void init() {
     gif.begin(LITTLE_ENDIAN_PIXELS);
+    return xTaskCreate(
+        gifTask,   /* Task function. */
+        "GifTask", /* String with name of task. */
+        8192 * 2,        /* Stack size in bytes. */
+        NULL,            /* Parameter passed as input of the task */
+        5,               /* Priority of the task. */
+        &task);           /* Task handle. */
   }
 
   void stop() {
@@ -161,42 +207,6 @@ namespace SpectreGif {
   bool isPlaying(const char* fp) {
     Serial.printf("Remove %s %s ?\n", current_gif_file.path(), fp);
     return current_gif_file && strcmp(current_gif_file.path(), fp) == 0;
-  }
-
-  void loop() {
-    int t, i;
-    if (spectre_gif_plz_stop) return;
-    if (next_gif_file.load() != nullptr) {
-      char* fp = next_gif_file.exchange(nullptr, std::memory_order_acq_rel);
-      if (fp != nullptr) {
-        if (current_gif_file) { // close old gif file
-          current_gif_file.close();
-        }
-        // fp will be freed by GIFOpenFile
-        if(gif.open(fp, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
-          spectre_gif_plz_stop = 0;
-          next_frame_millis = 0;
-          // clear both buffers
-          virtualDisp->clearScreen();
-          flip_matrix();
-          virtualDisp->clearScreen();
-        } else {
-          // error
-          spectre_gif_plz_stop = 1;
-          return;
-        }
-      }
-    }
-    // next frame
-    t = millis();
-    if (t < next_frame_millis) return;
-    if (!gif.playFrame(false, &i)) {
-      gif.reset();
-    }
-    next_frame_millis = t + i;
-    flip_matrix();
-    // copy front buffer into back buffer
-    virtualDisp->copyDMABuffer();
   }
 
 }

@@ -416,8 +416,6 @@ void playAnimeTask(void* parameter) {
 	root = filesystem.open("/GIF");
 
 	for (;;) {
-		SpectreGif::loop();
-		Lua::loop();
 		//Serial.printf("loop %s \n", root.path());
 		vTaskDelay(1 / portTICK_PERIOD_MS);
 		if (!root) {
