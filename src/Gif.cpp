@@ -19,6 +19,7 @@ extern void flip_matrix();
 
 namespace {
   static AnimatedGIF gif;
+  static TaskHandle_t task = NULL;
   static File current_gif_file;
   static uint32_t next_frame_millis = 0;
   static int spectre_gif_plz_stop = 1;
@@ -34,8 +35,8 @@ namespace {
     if (iWidth > V_MATRIX_WIDTH)
       iWidth = V_MATRIX_WIDTH;
 
-    int off_x = (V_MATRIX_WIDTH  - pDraw->iWidth )/2;
-    int off_y = (V_MATRIX_HEIGHT - pDraw->iHeight)/2;
+    int off_x = (V_MATRIX_WIDTH  - gif.getCanvasWidth() )/2;
+    int off_y = (V_MATRIX_HEIGHT - gif.getCanvasHeight())/2;
 
     usPalette = pDraw->pPalette;
     y = pDraw->iY + pDraw->y; // current line
@@ -69,7 +70,7 @@ namespace {
         }             // while looking for opaque pixels
         if (iCount) { // any opaque pixels?
           for (int xOffset = 0; xOffset < iCount; xOffset++) {
-            virtualDisp->drawPixel(off_x + x + xOffset, off_y + y, usTemp[xOffset]); // 565 Color Format
+            virtualDisp->drawPixel(off_x + x + xOffset + pDraw->iX, off_y + y, usTemp[xOffset]); // 565 Color Format
           }
           x += iCount;
           iCount = 0;
@@ -93,7 +94,7 @@ namespace {
       s = pDraw->pPixels;
       // Translate the 8-bit pixels through the RGB565 palette (already byte reversed)
       for (int x = 0; x < pDraw->iWidth; x++) {
-        virtualDisp->drawPixel(off_x + x, off_y + y, usPalette[*s++]); // color 565
+        virtualDisp->drawPixel(off_x + x + pDraw->iX, off_y + y, usPalette[*s++]); // color 565
       }
     }
   }
@@ -189,7 +190,7 @@ namespace SpectreGif {
     spectre_gif_plz_stop = 0;
   }
 
-  void init() {
+  uint8_t init() {
     gif.begin(LITTLE_ENDIAN_PIXELS);
     return xTaskCreate(
         gifTask,   /* Task function. */

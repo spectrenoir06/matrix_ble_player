@@ -334,6 +334,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 				}
 				flip_matrix();
 				free(img_buffer);
+				img_buffer = nullptr;
 				image_receive_mode = false;
 				timeout_var = 0;
 			}
@@ -430,8 +431,10 @@ void playAnimeTask(void* parameter) {
 				Serial.printf("timeout\n");
 				timeout_var = 0;
 				next_anim = 1;
-				if (img_buffer)
+				if (img_buffer) {
 					free(img_buffer);
+					img_buffer = nullptr;
+				}
 			}
 		}
 
