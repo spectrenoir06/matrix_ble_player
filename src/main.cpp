@@ -1,5 +1,7 @@
 #include <Mapping.h>
 
+#include <Preferences.h>
+Preferences preferences;
 
 #ifdef USE_SD
 	#include "FS.h"
@@ -35,12 +37,11 @@
 
 MatrixPanel_I2S_DMA *display = nullptr;
 
-uint8_t next_anim = 1;
-
 char	hostname[50] = DEFAULT_HOSTNAME;
 
 uint8_t* img_buffer = NULL;
 uint8_t brightness = BRIGHTNESS;
+File root;
 
 NimBLECharacteristic* pTxCharacteristic;
 bool deviceConnected = false;
@@ -153,8 +154,8 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 				case 'B':
 					switch (rxValue[2]) {
 						case '1':
-							if (rxValue[3] == '1')
-								next_anim = 1;
+							// if (rxValue[3] == '1')
+							// 	next_anim = 1;
 							break;
 						case '5':
 								set_brightness(brightness+2);
@@ -247,7 +248,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 
 					}
 					break;
-				case 'P':
+				case 'P': // Play a store gif
 					{
 						const char* data = rxValue.c_str();
 						char str[255];
@@ -260,6 +261,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 						Serial.printf("Open %s\n", str);
 						Lua::stop();
 						File file = filesystem.open(str);
+						preferences.putString("anim", file.path());
 						SpectreGif::play(file.path());
 					}
 					break;
@@ -349,6 +351,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 			if (byte_to_store >= data_size) {
 				gif_receive_mode = false;
 				Serial.printf("receive GIF OK\n");
+				preferences.putString("anim", f_tmp.path());
 				SpectreGif::play(f_tmp.path());
 				f_tmp.close();
 				timeout_var = 0;
@@ -379,119 +382,58 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 };
 
 
-void load_anim(File file) {
-	Serial.printf("load_anim !\n");
-	if (!file) {
-		print_message("Can't find\nGif file!");
-		delay(1000);
-		return;
-	}
-	Serial.printf("Open animation: '%s'\n", file.path());
-	display->clearScreen();
+// void load_anim(File file) {
+// 	Serial.printf("load_anim !\n");
+// 	if (!file) {
+// 		print_message("Can't find\nGif file!");
+// 		delay(1000);
+// 		return;
+// 	}
+// 	Serial.printf("Open animation: '%s'\n", file.path());
+// 	display->clearScreen();
 	
-	SpectreGif::play(file.path());
-	Serial.print("load anim: ");
-	Serial.print(file.name());
-	Serial.print("\tsize: ");
-	Serial.print(file.size() / (1024.0 * 1024.0));
-	Serial.println(" Mo");
+// 	SpectreGif::play(file.path());
+// 	Serial.print("load anim: ");
+// 	Serial.print(file.name());
+// 	Serial.print("\tsize: ");
+// 	Serial.print(file.size() / (1024.0 * 1024.0));
+// 	Serial.println(" Mo");
 
-	if (deviceConnected) {
-		char str[100];
-		memset(str, 0, 100);
-		strcat(str, "!P");
-		strcat(str, file.name());
-		strcat(str, "\r\n");
-		pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
-		pTxCharacteristic->notify();
-	}
-}
+// 	if (deviceConnected) {
+// 		char str[100];
+// 		memset(str, 0, 100);
+// 		strcat(str, "!P");
+// 		strcat(str, file.name());
+// 		strcat(str, "\r\n");
+// 		pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
+// 		pTxCharacteristic->notify();
+// 	}
+// }
 
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define BUF_SIZE (256*1)
 
 void playAnimeTask(void* parameter) {
-	File root;
-	if (!is_fs_mnt)
-		return;
-	root = filesystem.open("/GIF");
+
 
 	for (;;) {
-		//Serial.printf("loop %s \n", root.path());
-		vTaskDelay(1 / portTICK_PERIOD_MS);
-		if (!root) {
-			print_message("Can't find\nGif folder!\n");
-			vTaskDelay(1000 / portTICK_PERIOD_MS);
-		}
-		if (gif_receive_mode) {
-			// Check for timeouts
-			if (timeout_var != 0 && millis() > timeout_var) {
-				image_receive_mode = false;
-				gif_receive_mode = false;
-				Serial.printf("timeout\n");
-				timeout_var = 0;
-				next_anim = 1;
-				if (img_buffer) {
-					free(img_buffer);
-					img_buffer = nullptr;
-				}
-			}
-		}
-
-		if (digitalRead(0) == LOW || next_anim) {
-			if (!button_isPress || next_anim) {
-				button_isPress = 1;
-				next_anim = 0;
-				File file = root.openNextFile();
-				if (!file) {
-					root.close();
-					root = filesystem.open("/GIF");
-					file = root.openNextFile();
-				}
-				load_anim(file);
-			}
-		} else
-			button_isPress = 0;
-
-		if (list_send_mode) {
-			list_send_mode = false;
-			Serial.printf("Print list files:\n");
-			File tmp_root = filesystem.open("/GIF");
-			File tmp_file = tmp_root.openNextFile();
-			char str[255];
-			while(tmp_file) {
-				memset(str, 0, 255);
-				strcat(str, "!L");
-				strcat(str, tmp_file.name());
-				pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
-				pTxCharacteristic->notify();
-				// Serial.println(str);
-				tmp_file = tmp_root.openNextFile();
-			}
-			memset(str, 0, 255);
-			strcat(str, "!L!");
-			pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
-			pTxCharacteristic->notify();
-		}
+		
 	}
 
-	Serial.println("Ending task playAnimeTask");
-	vTaskDelete(NULL);
+	// Serial.println("Ending task playAnimeTask");
+	// vTaskDelete(NULL);
 }
 
 void setup() {
-	psramInit();
 	Serial.begin(115200);
 
 	Serial.println("\n------------------------------");
-	Serial.printf("  LEDs driver\n");
+	Serial.printf("  Hub75 LEDs driver\n");
 	Serial.printf("  Hostname: %s\n", hostname);
 	int core = xPortGetCoreID();
 	Serial.print("  Main code running on core ");
 	Serial.println(core);
 	Serial.println("------------------------------");
-
-	Serial.println("LEDs driver start");
 
 	HUB75_I2S_CFG::i2s_pins _pins = {R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN};
 	
@@ -524,8 +466,6 @@ void setup() {
 		virtualDisp = new VirtualMatrixPanel((*display), 1, 1, 64, 32, map);
 	#endif
 
-
-
 	set_brightness(BRIGHTNESS);
 
 	#ifdef USE_SD
@@ -553,6 +493,25 @@ void setup() {
 			is_fs_mnt = 1;
 		}
 	#endif
+
+	if (is_fs_mnt) {
+		root = filesystem.open("/GIF");
+		preferences.begin("matrix", false);
+		char str[255];
+		if (preferences.getString("anim", str, 255)) {
+			File file = filesystem.open(str);
+			if (file)
+				SpectreGif::play(file.path());
+		} else {
+			File file = root.openNextFile();
+			if (!file) {
+				root.close();
+				root = filesystem.open("/GIF");
+				file = root.openNextFile();
+				SpectreGif::play(file.path());
+			}
+		}
+	}
 
 	Serial.println("Start BLE");
 	// Create the BLE Device
@@ -598,7 +557,45 @@ void setup() {
 }
 
 void loop(void) {
-	vTaskDelay(20 / portTICK_PERIOD_MS);
-	return playAnimeTask(NULL);
+	//Serial.printf("loop %s \n", root.path());
+	if (!root) {
+		print_message("Can't find\nGif folder!\n");
+		vTaskDelay(1000 / portTICK_PERIOD_MS);
+	}
+
+	// Check for timeouts
+	if (timeout_var != 0 && millis() > timeout_var) {
+		image_receive_mode = false;
+		gif_receive_mode = false;
+		lua_receive_mode = false;
+		Serial.printf("timeout\n");
+		timeout_var = 0;
+		if (img_buffer) {
+			free(img_buffer);
+			img_buffer = nullptr;
+		}
+	}
+
+	if (list_send_mode) {
+		list_send_mode = false;
+		Serial.printf("Print list files:\n");
+		File tmp_root = filesystem.open("/GIF");
+		File tmp_file = tmp_root.openNextFile();
+		char str[255];
+		while(tmp_file) {
+			memset(str, 0, 255);
+			strcat(str, "!L");
+			strcat(str, tmp_file.name());
+			pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
+			pTxCharacteristic->notify();
+			// Serial.println(str);
+			tmp_file = tmp_root.openNextFile();
+		}
+		memset(str, 0, 255);
+		strcat(str, "!L!");
+		pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
+		pTxCharacteristic->notify();
+	}
+	vTaskDelay(1 / portTICK_PERIOD_MS);
 }
 
