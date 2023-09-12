@@ -58,6 +58,7 @@ public:
 	void fillScreenRGB888(uint8_t r, uint8_t g, uint8_t b);
     void clearScreen() { display->clearScreen(); }
     void drawPixelRGB888(int16_t x, int16_t y, uint8_t r, uint8_t g, uint8_t b);
+    void crtDrawPixelRGB888(int16_t x, int16_t y, uint8_t r, uint8_t g, uint8_t b);
 
 #ifdef USE_GFX_ROOT
     // 24bpp FASTLED CRGB colour struct support
@@ -152,9 +153,20 @@ inline void VirtualMatrixPanel::fillScreenRGB888(uint8_t r, uint8_t g, uint8_t b
 
 inline void VirtualMatrixPanel::drawPixelRGB888(int16_t x, int16_t y, uint8_t r, uint8_t g, uint8_t b)
 {
+    return crtDrawPixelRGB888(x, y, r, g, b); // LOL :-)
+    // this->getCoords(x, y);
+    // // Serial.printf("Requested virtual x,y coord (%d, %d), got phyical chain coord of (%d,%d)\n", x,y, coords.x, coords.y);
+    // this->display->drawPixelRGB888(coords.x, coords.y, r, g, b);
+}
+
+inline void VirtualMatrixPanel::crtDrawPixelRGB888(int16_t x, int16_t y, uint8_t r, uint8_t g, uint8_t b)
+{
+    this->getCoords(x-1, y-1);
+    this->display->crtDrawPixelRGB888(coords.x, coords.y, r, 0);
     this->getCoords(x, y);
-    // Serial.printf("Requested virtual x,y coord (%d, %d), got phyical chain coord of (%d,%d)\n", x,y, coords.x, coords.y);
-    this->display->drawPixelRGB888(coords.x, coords.y, r, g, b);
+    this->display->crtDrawPixelRGB888(coords.x, coords.y, g, 1);
+    this->getCoords(x+1, y+1);
+    this->display->crtDrawPixelRGB888(coords.x, coords.y, b, 2);
 }
 
 #ifdef USE_GFX_ROOT
