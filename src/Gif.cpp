@@ -42,61 +42,63 @@ namespace {
     y = pDraw->iY + pDraw->y; // current line
 
     s = pDraw->pPixels;
-    if (pDraw->ucDisposalMethod == 2) { // restore to background color
-      for (int x = 0; x < iWidth; x++) {
-        if (s[x] == pDraw->ucTransparent)
-          s[x] = pDraw->ucBackground;
-      }
-      pDraw->ucHasTransparency = 0;
-    }
+    // if (pDraw->ucDisposalMethod == 2) { // restore to background color
+    //   // for (int x = 0; x < iWidth; x++) {
+    //   //   if (s[x] == pDraw->ucTransparent)
+    //   //     s[x] = pDraw->ucBackground;
+    //   // }
+    //   pDraw->ucHasTransparency = 0;
+    // }
     // Apply the new pixels to the main image
-    if (pDraw->ucHasTransparency) { // if transparency used
-      uint8_t *pEnd, c, ucTransparent = pDraw->ucTransparent;
-      int x, iCount;
-      pEnd = s + pDraw->iWidth;
-      x = 0;
-      iCount = 0; // count non-transparent pixels
-      while (x < pDraw->iWidth) {
-        c = ucTransparent - 1;
-        d = usTemp;
-        while (c != ucTransparent && s < pEnd) {
-          c = *s++;
-          if (c == ucTransparent) { // done, stop
-            s--; // back up to treat it like transparent
-          } else { // opaque
-            *d++ = usPalette[c];
-            iCount++;
-          }
-        }             // while looking for opaque pixels
-        if (iCount) { // any opaque pixels?
-          for (int xOffset = 0; xOffset < iCount; xOffset++) {
-            virtualDisp->drawPixel(off_x + x + xOffset + pDraw->iX, off_y + y, usTemp[xOffset]); // 565 Color Format
-          }
-          x += iCount;
-          iCount = 0;
-        }
-        // no, look for a run of transparent pixels
-        c = ucTransparent;
-        while (c == ucTransparent && s < pEnd) {
-          c = *s++;
-          if (c == ucTransparent)
-            iCount++;
-          else
-            s--;
-        }
-        if (iCount) {
-          x += iCount; // skip these
-          iCount = 0;
-        }
-      }
-    }
-    else { // does not have transparency
+    // if (pDraw->ucHasTransparency) { // if transparency used
+    //   uint8_t *pEnd, c, ucTransparent = pDraw->ucTransparent;
+    //   int x, iCount;
+    //   pEnd = s + pDraw->iWidth;
+    //   x = 0;
+    //   iCount = 0; // count non-transparent pixels
+    //   while (x < pDraw->iWidth) {
+    //     c = ucTransparent - 1;
+    //     d = usTemp;
+    //     while (c != ucTransparent && s < pEnd) {
+    //       c = *s++;
+    //       if (c == ucTransparent) { // done, stop
+    //         s--; // back up to treat it like transparent
+    //       } else { // opaque
+    //         *d++ = usPalette[c];
+    //         iCount++;
+    //       }
+    //     }             // while looking for opaque pixels
+    //     if (iCount) { // any opaque pixels?
+    //       for (int xOffset = 0; xOffset < iCount; xOffset++) {
+    //         virtualDisp->drawPixel(off_x + x + xOffset + pDraw->iX, off_y + y, usTemp[xOffset]); // 565 Color Format
+    //       }
+    //       x += iCount;
+    //       iCount = 0;
+    //     }
+    //     // no, look for a run of transparent pixels
+    //     c = ucTransparent;
+    //     while (c == ucTransparent && s < pEnd) {
+    //       c = *s++;
+    //       if (c == ucTransparent)
+    //         iCount++;
+    //       else
+    //         s--;
+    //     }
+    //     if (iCount) {
+    //       x += iCount; // skip these
+    //       iCount = 0;
+    //     }
+    //   }
+    // }
+    // else { // does not have transparency
       s = pDraw->pPixels;
       // Translate the 8-bit pixels through the RGB565 palette (already byte reversed)
       for (int x = 0; x < pDraw->iWidth; x++) {
-        virtualDisp->drawPixel(off_x + x + pDraw->iX, off_y + y, usPalette[*s++]); // color 565
+        if (!pDraw->ucHasTransparency || *s != pDraw->ucTransparent)
+          virtualDisp->drawPixel(off_x + x + pDraw->iX, off_y + y, usPalette[*s]); // color 565
+        s++;
       }
-    }
+    // }
   }
 
   void *GIFOpenFile(const char *fname, int32_t *pSize) {
@@ -138,6 +140,19 @@ namespace {
     return pFile->iPos;
   }
 
+  void GIFFrame(GIFDRAW *pDraw) {
+    // Serial.printf("New frame\n");
+    if (pDraw->ucDisposalMethod != 0) {
+      virtualDisp->clearScreen();
+      // virtualDisp->fillRect(pDraw->iX, pDraw->iY, pDraw->iWidth, pDraw->iHeight, 0);
+      // flip_matrix();
+      // virtualDisp->clearScreen();
+    } else {
+      virtualDisp->copyDMABuffer();
+    }
+
+  }
+
   void gifTask(void *parameter) {
     int t, i;
     for (;;) {
@@ -150,7 +165,7 @@ namespace {
             current_gif_file.close();
           }
           // fp will be freed by GIFOpenFile
-          if(gif.open(fp, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
+          if(gif.open(fp, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw, GIFFrame)) {
             spectre_gif_plz_stop = 0;
             next_frame_millis = 0;
             // clear both buffers
@@ -167,13 +182,14 @@ namespace {
       // next frame
       t = millis();
       if (t < next_frame_millis) continue;
+      // virtualDisp->clearScreen();
       if (!gif.playFrame(false, &i)) {
         gif.reset();
       }
       next_frame_millis = t + i;
       flip_matrix();
       // copy front buffer into back buffer
-      virtualDisp->copyDMABuffer();
+      // virtualDisp->copyDMABuffer();
     }
   }
 
