@@ -1,4 +1,8 @@
 #include <Mapping.h>
+#include <esp_now.h>
+#include <WiFi.h>
+uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+esp_now_peer_info_t peerInfo;
 
 #include <Preferences.h>
 Preferences preferences;
@@ -66,6 +70,31 @@ uint8_t list_send_mode = false;
 uint8_t button_isPress = 0;
 VirtualMatrixPanel  *virtualDisp = nullptr;
 uint8_t is_fs_mnt = false;
+
+// callback when data is sent
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+	Serial.print(F("ESP-Now packet sent:\t"));
+	Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
+}
+
+void OnDataRecv(const uint8_t * mac_addr, const uint8_t *incomingData, int len) {
+	char macStr[18];
+	Serial.print("Packet received from: ");
+	snprintf(macStr, sizeof(macStr), "%02x:%02x:%02x:%02x:%02x:%02x",
+			mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+	Serial.println(macStr);
+
+	char str[300];
+	memcpy(str, incomingData, len);
+	str[len] = 0;
+	Serial.printf("data '%s'\n", str);
+	Lua::stop();
+	File file = filesystem.open(str);
+	if (file) {
+		preferences.putString("anim", file.path());
+		SpectreGif::play(file.path());
+	}
+}
 
 int sendBLE(const char *cstr) {
 	if (deviceConnected) {
@@ -259,10 +288,12 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 						if (ptr)
 							*ptr = 0;
 						Serial.printf("Open %s\n", str);
+						esp_now_send(broadcastAddress, (uint8_t*)str, strlen(str)); // send to other
 						Lua::stop();
 						File file = filesystem.open(str);
 						preferences.putString("anim", file.path());
 						SpectreGif::play(file.path());
+
 					}
 					break;
 				case 'S':
@@ -511,6 +542,10 @@ void setup() {
 				SpectreGif::play(file.path());
 			}
 		}
+		if (!root) {
+			print_message("Can't find\nGif folder\n");
+			// vTaskDelay(1000 / portTICK_PERIOD_MS);
+		}
 	}
 
 	Serial.println("Start BLE");
@@ -554,15 +589,37 @@ void setup() {
 	// Start advertising
 	pServer->getAdvertising()->start();
 	Serial.println("Waiting a client connection to notify...");
+
+	// Set device as a Wi-Fi Station
+	WiFi.mode(WIFI_STA);
+
+	// Init ESP-NOW
+	if (esp_now_init() != ESP_OK) {
+		Serial.println(F("Error initializing ESP-NOW"));
+		return;
+	}
+	Serial.print(F("Receiver initialized : "));
+	Serial.println(WiFi.macAddress());
+	
+	// Define Send function
+	esp_now_register_send_cb(OnDataSent);
+	esp_now_register_recv_cb(OnDataRecv);
+
+
+	// Register peer
+	memcpy(peerInfo.peer_addr, broadcastAddress, 6);
+	peerInfo.channel = 0;
+	peerInfo.encrypt = false;
+
+	// Add peer
+	if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+		Serial.println(F("Failed to add peer"));
+		return;
+	}
 }
 
 void loop(void) {
 	//Serial.printf("loop %s \n", root.path());
-	if (!root) {
-		print_message("Can't find\nGif folder!\n");
-		vTaskDelay(1000 / portTICK_PERIOD_MS);
-	}
-
 	// Check for timeouts
 	if (timeout_var != 0 && millis() > timeout_var) {
 		image_receive_mode = false;
