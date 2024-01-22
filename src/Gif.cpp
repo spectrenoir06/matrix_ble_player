@@ -16,6 +16,7 @@
 
 extern VirtualMatrixPanel *virtualDisp;
 extern void flip_matrix();
+uint8_t disposalMethod = 0;
 
 namespace {
   static AnimatedGIF gif;
@@ -27,6 +28,7 @@ namespace {
 
   // Draw a line of image directly on the LED Matrix
   void GIFDraw(GIFDRAW *pDraw) {
+    disposalMethod = pDraw->ucDisposalMethod;
     uint8_t *s;
     uint16_t *d, *usPalette, usTemp[320];
     int y, iWidth;
@@ -140,19 +142,6 @@ namespace {
     return pFile->iPos;
   }
 
-  void GIFFrame(GIFDRAW *pDraw) {
-    // Serial.printf("New frame\n");
-    if (pDraw->ucDisposalMethod != 0) {
-      virtualDisp->clearScreen();
-      // virtualDisp->fillRect(pDraw->iX, pDraw->iY, pDraw->iWidth, pDraw->iHeight, 0);
-      // flip_matrix();
-      // virtualDisp->clearScreen();
-    } else {
-      virtualDisp->copyDMABuffer();
-    }
-
-  }
-
   void gifTask(void *parameter) {
     int t, i;
     for (;;) {
@@ -165,7 +154,7 @@ namespace {
             current_gif_file.close();
           }
           // fp will be freed by GIFOpenFile
-          if(gif.open(fp, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw, GIFFrame)) {
+          if(gif.open(fp, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
             spectre_gif_plz_stop = 0;
             next_frame_millis = 0;
             // clear both buffers
@@ -185,9 +174,22 @@ namespace {
       // virtualDisp->clearScreen();
       if (!gif.playFrame(false, &i)) {
         gif.reset();
+        flip_matrix();
+        virtualDisp->clearScreen();
+      } else {
+        flip_matrix();
+        if (disposalMethod == 2) {
+          virtualDisp->clearScreen();
+          // virtualDisp->fillRect(pDraw->iX, pDraw->iY, pDraw->iWidth, pDraw->iHeight, 0);
+          // flip_matrix();
+          // virtualDisp->clearScreen();
+        } else {
+          virtualDisp->copyDMABuffer();
+        }
       }
+          // Serial.printf("New frame\n");
       next_frame_millis = t + i;
-      flip_matrix();
+
       // copy front buffer into back buffer
       // virtualDisp->copyDMABuffer();
     }
