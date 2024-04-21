@@ -527,6 +527,7 @@ void setup() {
 	// Create the BLE Device
 	NimBLEDevice::init(HOSTNAME);
 	NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+	NimBLEDevice::setMTU(BLE_ATT_MTU_MAX);
 
 	// NimBLEDevice::setSecurityAuth(/*BLE_SM_PAIR_AUTHREQ_BOND | BLE_SM_PAIR_AUTHREQ_MITM |*/ BLE_SM_PAIR_AUTHREQ_SC);
 
