@@ -25,6 +25,17 @@ Preferences preferences;
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
+#define SERVICE_UUID_SPECTRE          "00004242-0000-1000-8000-00805F9B34FB" // Spectre service UUID
+#define CHARACTERISTIC_UUID_FIRMWARE  "00004243-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_HARDWARE  "00004244-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_ENV       "00004245-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_GIT       "00004246-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_BRIGHT    "00004247-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_MATRIX_LX "00004248-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_MATRIX_LY "00004249-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_MATRIX_VX "00004250-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_MATRIX_VY "00004251-0000-1000-8000-00805F9B34FB"
+
 #define DEFAULT_HOSTNAME	HOSTNAME
 #define AP_SSID				HOSTNAME
 
@@ -535,15 +546,16 @@ void setup() {
 	NimBLEServer* pServer = NimBLEDevice::createServer();
 	pServer->setCallbacks(new MyServerCallbacks());
 
-	// Create the BLE Service
+	// Create the BLE Service UART
 	NimBLEService* pService = pServer->createService(SERVICE_UUID);
 
-	// Create a BLE Characteristic
+	// Create a BLE Characteristic UART TX
 	pTxCharacteristic = pService->createCharacteristic(
 		CHARACTERISTIC_UUID_TX,
 		NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ
 	);
 
+	// Create a BLE Characteristic  UART RX
 	BLECharacteristic* pRxCharacteristic = pService->createCharacteristic(
 		CHARACTERISTIC_UUID_RX,
 		NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::READ// | NIMBLE_PROPERTY::WRITE_NR
@@ -553,6 +565,25 @@ void setup() {
 
 	// Start the service
 	pService->start();
+
+
+
+	// Create the BLE Service UART
+	NimBLEService* pService2 = pServer->createService(SERVICE_UUID_SPECTRE);
+
+	// Create a BLE Characteristic
+	pService2->createCharacteristic(CHARACTERISTIC_UUID_FIRMWARE,  NIMBLE_PROPERTY::READ)->setValue("1.0.0");
+	// pService2->createCharacteristic(CHARACTERISTIC_UUID_HARDWARE,  NIMBLE_PROPERTY::READ);
+	// pService2->createCharacteristic(CHARACTERISTIC_UUID_ENV,       NIMBLE_PROPERTY::READ);
+	pService2->createCharacteristic(CHARACTERISTIC_UUID_GIT,       NIMBLE_PROPERTY::READ)->setValue(BUILD_GIT_COMMIT_HASH);
+	pService2->createCharacteristic(CHARACTERISTIC_UUID_BRIGHT,    NIMBLE_PROPERTY::READ)->setValue(brightness);
+	pService2->createCharacteristic(CHARACTERISTIC_UUID_MATRIX_LX, NIMBLE_PROPERTY::READ)->setValue(MATRIX_WIDTH);
+	pService2->createCharacteristic(CHARACTERISTIC_UUID_MATRIX_LY, NIMBLE_PROPERTY::READ)->setValue(MATRIX_HEIGHT);
+	pService2->createCharacteristic(CHARACTERISTIC_UUID_MATRIX_VX, NIMBLE_PROPERTY::READ)->setValue(V_MATRIX_WIDTH);
+	pService2->createCharacteristic(CHARACTERISTIC_UUID_MATRIX_VY, NIMBLE_PROPERTY::READ)->setValue(V_MATRIX_HEIGHT);
+
+	pService2->start();
+
 
 	BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
 	// pAdvertising->setAppearance(0x7<<6); // glasses
