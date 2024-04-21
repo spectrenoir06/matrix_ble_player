@@ -503,15 +503,22 @@ void setup() {
 		char str[255];
 		if (preferences.getString("anim", str, 255)) {
 			File file = filesystem.open(str);
-			if (file)
+			if (file.size() > 0) {
+				Serial.printf("Start previous anim %s, %s\n", str, file.path());
 				SpectreGif::play(file.path());
+			} else {
+				print_message("Gif\nnot loaded");
+			}
 		} else {
 			File file = root.openNextFile();
 			if (!file) {
 				root.close();
 				root = filesystem.open("/GIF");
 				file = root.openNextFile();
-				SpectreGif::play(file.path());
+				if (file)
+					SpectreGif::play(file.path());
+				else
+					print_message("No gif\nfound");
 			}
 		}
 	}
