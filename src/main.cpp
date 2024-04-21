@@ -601,7 +601,7 @@ void setup() {
 
 void loop(void) {
 	//Serial.printf("loop %s \n", root.path());
-	if (!root) {
+	if (is_fs_mnt && !root) {
 		print_message("Can't find\nGif folder!\n");
 		vTaskDelay(1000 / portTICK_PERIOD_MS);
 	}
