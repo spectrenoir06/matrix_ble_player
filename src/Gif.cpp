@@ -209,7 +209,7 @@ namespace {
 
       t = millis();
       if (t >= next_frame_millis) {
-        next_frame_millis = next_frame_millis + i;
+        next_frame_millis = millis() + i;
         if (!more_frame) {
           gif.reset();
           flip_matrix();

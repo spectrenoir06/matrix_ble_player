@@ -461,6 +461,9 @@ void setup() {
 			-1, 0, -1
 		};
 		virtualDisp = new VirtualMatrixPanel((*display), 3, 3, 32, 32, map);
+	#elif IS_PRINTER
+		int16_t map[1] = {0};
+		virtualDisp = new VirtualMatrixPanel((*display), 1, 1, 128, 32, map);
 	#else
 		int16_t map[1] = {0};
 		virtualDisp = new VirtualMatrixPanel((*display), 1, 1, 64, 32, map);
@@ -552,6 +555,7 @@ void setup() {
 	Serial.println("::init() OK");
 
 	// Start advertising
+	pServer->getAdvertising()->addServiceUUID(SERVICE_UUID);
 	pServer->getAdvertising()->start();
 	Serial.println("Waiting a client connection to notify...");
 }
