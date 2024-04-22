@@ -15,6 +15,7 @@ Preferences preferences;
 #endif
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <NimBLEDevice.h>
+#include "BLEOTA.h"
 #include "Gif.hpp"
 #include "Lua.hpp"
 
@@ -546,6 +547,9 @@ void setup() {
 	NimBLEServer* pServer = NimBLEDevice::createServer();
 	pServer->setCallbacks(new MyServerCallbacks());
 
+	BLEOTA.begin(pServer);
+	BLEOTA.init();
+
 	// Create the BLE Service UART
 	NimBLEService* pService = pServer->createService(SERVICE_UUID);
 
@@ -572,10 +576,10 @@ void setup() {
 	NimBLEService* pService2 = pServer->createService(SERVICE_UUID_SPECTRE);
 
 	// Create a BLE Characteristic
-	pService2->createCharacteristic(CHARACTERISTIC_UUID_FIRMWARE,  NIMBLE_PROPERTY::READ)->setValue("1.0.0");
+	pService2->createCharacteristic(CHARACTERISTIC_UUID_FIRMWARE,  NIMBLE_PROPERTY::READ)->setValue((uint8_t*)"1.0.0", strlen("1.0.0"));
 	// pService2->createCharacteristic(CHARACTERISTIC_UUID_HARDWARE,  NIMBLE_PROPERTY::READ);
 	// pService2->createCharacteristic(CHARACTERISTIC_UUID_ENV,       NIMBLE_PROPERTY::READ);
-	pService2->createCharacteristic(CHARACTERISTIC_UUID_GIT,       NIMBLE_PROPERTY::READ)->setValue(BUILD_GIT_COMMIT_HASH);
+	pService2->createCharacteristic(CHARACTERISTIC_UUID_GIT,       NIMBLE_PROPERTY::READ)->setValue((uint8_t*)BUILD_GIT_COMMIT_HASH, strlen(BUILD_GIT_COMMIT_HASH));
 	pService2->createCharacteristic(CHARACTERISTIC_UUID_BRIGHT,    NIMBLE_PROPERTY::READ)->setValue(brightness);
 	pService2->createCharacteristic(CHARACTERISTIC_UUID_MATRIX_LX, NIMBLE_PROPERTY::READ)->setValue(MATRIX_WIDTH);
 	pService2->createCharacteristic(CHARACTERISTIC_UUID_MATRIX_LY, NIMBLE_PROPERTY::READ)->setValue(MATRIX_HEIGHT);
@@ -594,13 +598,16 @@ void setup() {
 	Serial.println("::init() OK");
 
 	// Start advertising
-	pServer->getAdvertising()->addServiceUUID(SERVICE_UUID);
+	// pServer->getAdvertising()->addServiceUUID(SERVICE_UUID);
+	pServer->getAdvertising()->addServiceUUID(BLEOTA.getBLEOTAuuid());
+
 	pServer->getAdvertising()->start();
 	Serial.println("Waiting a client connection to notify...");
 }
 
 void loop(void) {
 	//Serial.printf("loop %s \n", root.path());
+	BLEOTA.process();
 	if (is_fs_mnt && !root) {
 		print_message("Can't find\nGif folder!\n");
 		vTaskDelay(1000 / portTICK_PERIOD_MS);
