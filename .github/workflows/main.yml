@@ -41,17 +41,37 @@ jobs:
       env:
         SUPER_SECRET: ${{ secrets.TOKEN }} 
       run: |
-        mv .pio/build/Banane_V1/firmware.bin       matrix_ble_player_Banane_V1.bin
-        mv .pio/build/Banane_V1_noSD/firmware.bin  matrix_ble_player_Banane_V1_noSD.bin
-        # mv .pio/build/Banane_V1_proto/firmware.bin matrix_ble_player_Banane_V1_proto.bin
-        mv .pio/build/matrix_64x64/firmware.bin    matrix_ble_player_matrix_64x64.bin
-        mv .pio/build/matrix_cross/firmware.bin    matrix_ble_player_matrix_cross.bin
+        mv .pio/build/Banane_V1/firmware.bin         matrix_ble_player_Banane_V1.firm.bin
+        mv .pio/build/Banane_V1/bootloader.bin       matrix_ble_player_Banane_V1.boot.bin
+        mv .pio/build/Banane_V1/partitions.bin       matrix_ble_player_Banane_V1.part.bin
 
-        curl -sSF file=@matrix_ble_player_Banane_V1.bin        'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@matrix_ble_player_Banane_V1_noSD.bin   'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        # curl -sSF file=@matrix_ble_player_Banane_V1_proto.bin  'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@matrix_ble_player_matrix_64x64.bin     'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@matrix_ble_player_matrix_cross.bin     'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        mv .pio/build/Banane_V1_noSD/firmware.bin    matrix_ble_player_Banane_V1_noSD.firm.bin
+        mv .pio/build/Banane_V1_noSD/bootloader.bin  matrix_ble_player_Banane_V1_noSD.boot.bin
+        mv .pio/build/Banane_V1_noSD/partitions.bin  matrix_ble_player_Banane_V1_noSD.part.bin
+
+        mv .pio/build/matrix_64x64/firmware.bin      matrix_ble_player_matrix_64x64.firm.bin
+        mv .pio/build/matrix_64x64/bootloader.bin    matrix_ble_player_matrix_64x64.boot.bin
+        mv .pio/build/matrix_64x64/partitions.bin    matrix_ble_player_matrix_64x64.part.bin
+
+        mv .pio/build/matrix_cross/firmware.bin      matrix_ble_player_matrix_cross.firm.bin
+        mv .pio/build/matrix_cross/bootloader.bin    matrix_ble_player_matrix_cross.boot.bin
+        mv .pio/build/matrix_cross/partitions.bin    matrix_ble_player_matrix_cross.part.bin
+
+        curl -sSF file=@matrix_ble_player_Banane_V1.firm.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@matrix_ble_player_Banane_V1.boot.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@matrix_ble_player_Banane_V1.part.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+
+        curl -sSF file=@matrix_ble_player_Banane_V1_noSD.firm.bin     'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@matrix_ble_player_Banane_V1_noSD.boot.bin     'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@matrix_ble_player_Banane_V1_noSD.part.bin     'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+
+        curl -sSF file=@matrix_ble_player_matrix_64x64.firm.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@matrix_ble_player_matrix_64x64.boot.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@matrix_ble_player_matrix_64x64.part.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+
+        curl -sSF file=@matrix_ble_player_matrix_cross.firm.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@matrix_ble_player_matrix_cross.boot.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@matrix_ble_player_matrix_cross.part.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
         
         echo `TZ="Europe/Paris" date '+%F %T'`" git:"`git rev-parse --short HEAD` > matrix_ble_player.info
         curl -sSF file=@matrix_ble_player.info 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
