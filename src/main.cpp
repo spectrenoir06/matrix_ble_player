@@ -523,7 +523,7 @@ void setup() {
 			}
 		} else {
 			File file = root.openNextFile();
-			if (!file) {
+			if (file) {
 				root.close();
 				root = filesystem.open("/GIF");
 				file = root.openNextFile();
@@ -531,6 +531,8 @@ void setup() {
 					SpectreGif::play(file.path());
 				else
 					print_message("No gif\nfound");
+			} else {
+				print_message("No gif\nfound");
 			}
 		}
 	}
