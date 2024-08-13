@@ -57,23 +57,23 @@ jobs:
         mv .pio/build/matrix_cross/bootloader.bin    matrix_ble_player_matrix_cross.boot.bin
         mv .pio/build/matrix_cross/partitions.bin    matrix_ble_player_matrix_cross.part.bin
 
-        curl -sSF file=@matrix_ble_player_Banane_V1.firm.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@matrix_ble_player_Banane_V1.boot.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@matrix_ble_player_Banane_V1.part.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@matrix_ble_player_Banane_V1.firm.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
+        curl -sSF file=@matrix_ble_player_Banane_V1.boot.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
+        curl -sSF file=@matrix_ble_player_Banane_V1.part.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
 
-        curl -sSF file=@matrix_ble_player_Banane_V1_noSD.firm.bin     'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@matrix_ble_player_Banane_V1_noSD.boot.bin     'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@matrix_ble_player_Banane_V1_noSD.part.bin     'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@matrix_ble_player_Banane_V1_noSD.firm.bin     'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
+        curl -sSF file=@matrix_ble_player_Banane_V1_noSD.boot.bin     'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
+        curl -sSF file=@matrix_ble_player_Banane_V1_noSD.part.bin     'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
 
-        curl -sSF file=@matrix_ble_player_matrix_64x64.firm.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@matrix_ble_player_matrix_64x64.boot.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@matrix_ble_player_matrix_64x64.part.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@matrix_ble_player_matrix_64x64.firm.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
+        curl -sSF file=@matrix_ble_player_matrix_64x64.boot.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
+        curl -sSF file=@matrix_ble_player_matrix_64x64.part.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
 
-        curl -sSF file=@matrix_ble_player_matrix_cross.firm.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@matrix_ble_player_matrix_cross.boot.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@matrix_ble_player_matrix_cross.part.bin         'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@matrix_ble_player_matrix_cross.firm.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
+        curl -sSF file=@matrix_ble_player_matrix_cross.boot.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
+        curl -sSF file=@matrix_ble_player_matrix_cross.part.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
         
         echo `TZ="Europe/Paris" date '+%F %T'`" git:"`git rev-parse --short HEAD` > matrix_ble_player.info
-        curl -sSF file=@matrix_ble_player.info 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@matrix_ble_player.info 'http:s//antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
 
 
