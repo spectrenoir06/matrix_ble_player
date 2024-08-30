@@ -1,4 +1,5 @@
 #include <Mapping.h>
+#include <sys/stat.h>
 
 #include <Preferences.h>
 Preferences preferences;
@@ -75,9 +76,19 @@ int time_reveice = 0;
 String lua_script = "";
 uint8_t list_send_mode = false;
 
+uint8_t list2_send_mode = false;
+uint8_t list3_send_mode = false;
+
+uint8_t gif_send_mode = false;
+File gif_send_file;
+int MTU = BLE_ATT_MTU_MAX;
+uint32_t gif_send_tosend = 0;
+
 uint8_t button_isPress = 0;
 VirtualMatrixPanel  *virtualDisp = nullptr;
 uint8_t is_fs_mnt = false;
+
+NimBLEServer* pServer;
 
 int sendBLE(const char *cstr) {
 	if (deviceConnected) {
@@ -106,7 +117,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 
 uint16_t hue = 0;
 
-void print_progress(const char *str) {
+void print_progress(const char *str, uint32_t offset, uint32_t total_size) {
 	virtualDisp->clearScreen();
 	virtualDisp->setCursor(4, V_MATRIX_HEIGHT / 2 - 14);
 	virtualDisp->setTextSize(1);
@@ -118,7 +129,7 @@ void print_progress(const char *str) {
 	virtualDisp->fillRect(
 		4+1,
 		(V_MATRIX_HEIGHT/2)+1,
-		map(byte_to_store, 0, data_size, 0, ((V_MATRIX_WIDTH) - 4 * 2 - 2)),
+		map(offset, 0, total_size, 0, ((V_MATRIX_WIDTH) - 4 * 2 - 2)),
 		8 - 2,
 		rgb.r,
 		rgb.g,
@@ -141,14 +152,18 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
 	void onConnect(NimBLEServer* pServer, ble_gap_conn_desc *desc) {
 		deviceConnected = true;
 		pServer->updateConnParams(desc->conn_handle, 0x6, 0x6, 0, 100);
+		pServer->setDataLen(desc->conn_handle, 251);
+		Serial.printf("conn_itvl: %d, conn_latency: %d\n");
 	};
 
 	void onDisconnect(NimBLEServer* pServer) {
 		deviceConnected = false;
 	}
 
-	void onMTUChange (uint16_t MTU, ble_gap_conn_desc *desc) {
-		Serial.printf("MTU change: %d\n", MTU);
+	void onMTUChange (uint16_t mtu, ble_gap_conn_desc *desc) {
+		Serial.printf("MTU change: %d\n", mtu);
+		NimBLEDevice::setMTU(mtu);
+		MTU = mtu;
 	}
 };
 	
@@ -156,14 +171,14 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
 class MyCallbacks : public NimBLECharacteristicCallbacks {
 	void onWrite(NimBLECharacteristic* pCharacteristic) {
 		std::string rxValue = pCharacteristic->getValue();
-		Serial.printf("Received Value: %d:\n", rxValue.length());
+		Serial.printf("Received Value: %d:\n, ", rxValue.length());
 		// for (int i = 0; i < rxValue.length(); i++)
 			// Serial.print(rxValue[i]);
 		// Serial.println();
 
 		if (rxValue.length() > 0 && rxValue[0] == '!' && !image_receive_mode && !gif_receive_mode) {
 			switch (rxValue[1]) {
-				case 'B':
+				case 'B':  // Image display 
 					switch (rxValue[2]) {
 						case '1':
 							// if (rxValue[3] == '1')
@@ -186,11 +201,11 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 							break;
 					}
 					break;
-				case 'C':
+				case 'C':  // Color display 
 					Lua::stop();
 					set_all_pixel(rxValue[2], rxValue[3], rxValue[4], 0);
 					break;
-				case 'I':
+				case 'I': // Image display 
 					{
 						Lua::stop();
 						SpectreGif::stop();
@@ -217,7 +232,18 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 					}
 					break;
 				case 'L': // List files
-						list_send_mode = true;
+					{
+						if (rxValue.length() > 2) {
+							if (rxValue[2] == '2'){
+								list2_send_mode = true;
+							} else if (rxValue[2] == '3') {
+								list3_send_mode = true;
+							}
+						}
+						else {
+							list_send_mode = true;
+						}
+					}
 					break;
 				case 'D': // delete file
 					{
@@ -238,7 +264,6 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 					{
 						Lua::stop();
 						SpectreGif::stop();
-						gif_receive_mode = true;
 						const char* data = rxValue.c_str();
 						char str[255];
 						memset(str, 0, 255);
@@ -257,7 +282,29 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 						timeout_var = millis() + timeout_time;
 						time_reveice = millis();
 						flip_matrix();
-
+						gif_receive_mode = true;
+					}
+					break;
+				case 'U':
+					{
+						const char* data = rxValue.c_str();
+						char str[255];
+						memset(str, 0, 255);
+						strcat(str, "/GIF/");
+						strcat(str, data+2+4);
+						char *ptr = strchr(str, '\n');
+						if (ptr)
+							*ptr = 0;
+						gif_send_file = filesystem.open(str);
+						gif_send_tosend = *((uint32_t*)(data+2));
+						if (gif_send_file.size() < gif_send_tosend)
+							gif_send_tosend = gif_send_file.size();
+						for (int i = 0; i < rxValue.length(); i++)
+							Serial.print(rxValue[i]);
+						Serial.println();
+						Serial.printf("Upload %s, size %d\n", str, gif_send_tosend);
+						SpectreGif::stop();
+						gif_send_mode = true;
 					}
 					break;
 				case 'P': // Play a store gif
@@ -277,10 +324,9 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 						SpectreGif::play(file.path());
 					}
 					break;
-				case 'S':
+				case 'S': // Lua receive
 					{
 						SpectreGif::stop();
-						lua_receive_mode = true;
 						const char* data = rxValue.c_str();
 						data_size = *(uint32_t*)(data + 2);
 						Serial.printf("load lua size:%d\n", data_size);
@@ -293,9 +339,10 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 						}
 						timeout_var = millis() + timeout_time;
 						time_reveice = millis();
+						lua_receive_mode = true;
 					}
 					break;
-				case 'E':
+				case 'E': // brightness
 					{
 						const char* data = rxValue.c_str();
 						brightness = atoi(data+2);
@@ -353,7 +400,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 				timeout_var = 0;
 			}
 			else {
-				print_progress("load img:");
+				print_progress("load img:", byte_to_store, data_size);
 			}
 		}
 
@@ -370,7 +417,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 				Serial.printf("time to receive gif: %dms\n", millis() - time_reveice);
 			}
 			else {
-				print_progress("load gif:");
+				print_progress("load gif:", byte_to_store, data_size);
 			}
 		}
 		
@@ -387,11 +434,30 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 				Lua::run_script(lua_script);
 			}
 			else {
-				// print_progress("load lua:");
+				// print_progress("load lua:", byte_to_store, data_size);
 			}
 		}
 	}
 };
+
+class MyCallbacks2 : public NimBLECharacteristicCallbacks {
+	// void onNotify(NimBLECharacteristic* pCharacteristic) {
+    //     Serial.println("Sending notification to clients");
+    // };
+
+    /**
+     *  The value returned in code is the NimBLE host return code.
+     */
+    void onStatus(NimBLECharacteristic* pCharacteristic, int code) {
+        String str = ("Notification/Indication return code: ");
+        str += code;
+        str += ", ";
+        str += NimBLEUtils::returnCodeToString(code);
+        Serial.println(str);
+    };
+};
+
+
 
 
 // void load_anim(File file) {
@@ -546,7 +612,7 @@ void setup() {
 	// NimBLEDevice::setSecurityAuth(/*BLE_SM_PAIR_AUTHREQ_BOND | BLE_SM_PAIR_AUTHREQ_MITM |*/ BLE_SM_PAIR_AUTHREQ_SC);
 
 	// Create the BLE Server
-	NimBLEServer* pServer = NimBLEDevice::createServer();
+	pServer = NimBLEDevice::createServer();
 	pServer->setCallbacks(new MyServerCallbacks());
 
 	BLEOTA.begin(pServer);
@@ -558,7 +624,7 @@ void setup() {
 	// Create a BLE Characteristic UART TX
 	pTxCharacteristic = pService->createCharacteristic(
 		CHARACTERISTIC_UUID_TX,
-		NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ
+		NIMBLE_PROPERTY::NOTIFY
 	);
 
 	// Create a BLE Characteristic  UART RX
@@ -568,6 +634,7 @@ void setup() {
 	);
 
 	pRxCharacteristic->setCallbacks(new MyCallbacks());
+	pTxCharacteristic->setCallbacks(new MyCallbacks2());
 
 	// Start the service
 	pService->start();
@@ -629,7 +696,6 @@ void loop(void) {
 	}
 
 	if (list_send_mode) {
-		list_send_mode = false;
 		Serial.printf("Print list files:\n");
 		File tmp_root = filesystem.open("/GIF");
 		File tmp_file = tmp_root.openNextFile();
@@ -647,7 +713,172 @@ void loop(void) {
 		strcat(str, "!L!");
 		pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
 		pTxCharacteristic->notify();
+		list_send_mode = false;
 	}
+
+	if (list2_send_mode) {
+		Serial.printf("Print list2 files:\n");
+		pTxCharacteristic->notify((uint8_t*)"!L2", 3);
+		File tmp_root = filesystem.open("/GIF");
+		String tmp_filename = tmp_root.getNextFileName();
+		const char *name = tmp_filename.c_str();
+		char *str = (char*)malloc((MTU-10));
+		char *ptr = str;
+		uint32_t pqt_size = 0;
+		while(tmp_filename.length() > 0) {
+			uint32_t name_size = strlen(name) + 1 - 5;
+			if ((pqt_size + name_size) > (MTU-10)) { // pqt full need to send
+				pTxCharacteristic->notify((uint8_t*)str, pqt_size);
+				Serial.printf("send: %d\n", pqt_size);
+				pqt_size = 0;
+			}
+			memcpy(str + pqt_size, name+5, name_size);
+			pqt_size += name_size;
+			tmp_filename = tmp_root.getNextFileName();
+			name = tmp_filename.c_str();
+		}
+
+		if (pqt_size > 0) { // still data to send
+			pTxCharacteristic->notify((uint8_t*)str, pqt_size);
+		}
+		pTxCharacteristic->notify((uint8_t*)"!L2!", 4);
+		list2_send_mode = false;
+	}
+
+	if (list3_send_mode) {
+		Serial.printf("Print list3 files:\n");
+		pTxCharacteristic->notify((uint8_t*)"!L3", 3);
+		File tmp_root = filesystem.open("/GIF");
+		File tmp_file = tmp_root.openNextFile();
+		char *str = (char*)malloc(500);
+		char *ptr = str;
+		uint32_t pqt_size = 0;
+		while(tmp_file) {
+			const char *name = tmp_file.name();
+			uint32_t name_size = strlen(name) + 1;
+			uint32_t file_size = tmp_file.size();
+			Serial.printf("%s, %d\n", name, file_size);
+
+			if ((pqt_size + name_size + 4) > (MTU-10)) { // pqt full need to send
+				pTxCharacteristic->notify((uint8_t*)str, pqt_size);
+				Serial.printf("send: %d\n", pqt_size);
+				pqt_size = 0;
+			}
+
+			memcpy(str + pqt_size, name, name_size);
+			pqt_size += name_size;
+			memcpy(str + pqt_size, &file_size, 4);
+			pqt_size += 4;
+			tmp_file = tmp_root.openNextFile();
+		}
+
+		if (pqt_size > 0) { // still data to send
+			pTxCharacteristic->notify((uint8_t*)str, pqt_size);
+		}
+		pTxCharacteristic->notify((uint8_t*)"!L3!", 4);
+		free(str);
+		list3_send_mode = false;
+	}
+
+	// if (list2_send_mode) {
+	// 	Serial.printf("Print list2 files:\n");
+	// 	pTxCharacteristic->notify((uint8_t*)"!L2", 3);
+	// 	// File tmp_root = filesystem.open("/GIF");
+		
+	// 	DIR *dirp;
+    // 	struct dirent *dp;
+	// 	char str[500];
+	// 	char *ptr = str;
+	// 	uint32_t pqt_size = 0;
+
+	// 	if ((dirp = opendir("/GIF")) == NULL) {
+	// 		Serial.printf("couldn't open 'GIF'");
+	// 		list2_send_mode = false;
+	// 		return;
+	// 	}
+
+	// 	do {
+	// 		if ((dp = readdir(dirp)) != NULL) {
+	// 			dp->d_name;
+	// 			const char *name = dp->d_name;
+	// 			uint32_t name_size = strlen(name) + 1;
+
+
+	// 			struct stat st;
+	// 			if (stat(name, &st) == 0)
+	// 			{
+	// 				Serial.printf("File size:%ld\n", st.st_size);
+	// 			}
+	// 			uint32_t file_size = st.st_size;
+
+	// 			Serial.printf("%s, %d\n", name, file_size);
+
+	// 			if ((pqt_size + name_size + 4) > sizeof(str)) { // pqt full need to send
+	// 				pTxCharacteristic->notify((uint8_t*)str, pqt_size);
+	// 				Serial.printf("send: %d\n", pqt_size);
+	// 				pqt_size = 0;
+	// 			}
+	// 			memcpy(str + pqt_size, name, name_size);
+	// 			pqt_size += name_size;
+	// 			memcpy(str + pqt_size, &file_size, 4);
+	// 			pqt_size += 4;
+	// 			(void)closedir(dirp);
+
+	// 		}
+	// 	} while (dp != NULL);
+
+
+	// 	// File tmp_file = tmp_root.openNextFile();
+	// 	// while(tmp_file) {
+
+	// 	// 	tmp_file = tmp_root.openNextFile();
+	// 	// }
+
+	// 	if (pqt_size > 0) { // still data to send
+	// 		pTxCharacteristic->notify((uint8_t*)str, pqt_size);
+	// 	}
+	// 	pTxCharacteristic->notify((uint8_t*)"!L2!", 4);
+	// 	list2_send_mode = false;
+	// }
+
+	if (gif_send_mode) {
+		// gif_send_mode = false;
+		uint32_t fragment_size = MTU-10 ;  // MTU-3
+		// Serial.printf("send gif over BLE: MTU = %d\n", fragment_size);
+		uint8_t *buff = (uint8_t*)malloc(fragment_size);
+		size_t size = 0;
+		uint32_t pqt_nb = 0;
+		uint32_t data_to_send = gif_send_tosend;
+		do {
+			size = gif_send_file.read(buff, fragment_size);
+			// Serial.printf("read: %d, to_send %d\n", size, data_to_send);
+
+			if (size > 0) {
+				if (data_to_send > size) {
+					data_to_send -= size;
+				} else {
+					data_to_send = 0;
+				}
+				// pTxCharacteristic->setValue(buff, size);
+				// pTxCharacteristic->notify();
+				pTxCharacteristic->notify(buff, size, true);
+				pqt_nb++;
+				// if ((pqt_nb % 1) == 0) {
+					print_progress(gif_send_file.name(), gif_send_tosend-data_to_send, gif_send_tosend);
+				// }
+				vTaskDelay(10 / portTICK_PERIOD_MS);
+			}
+
+		} while (size > 0 && data_to_send > 0 && deviceConnected);
+		Serial.printf("total pqt: %d\n", pqt_nb);
+		vTaskDelay(100 / portTICK_PERIOD_MS);
+		// pTxCharacteristic->setValue((const uint8_t*)"!U!", strlen("!U!"));
+		pTxCharacteristic->notify((const uint8_t*)"!U!", strlen("!U!"), false);
+		free(buff);
+		gif_send_file.close();
+		gif_send_mode = false;
+	}
+
 	vTaskDelay(1 / portTICK_PERIOD_MS);
 }
 
