@@ -528,6 +528,11 @@ void setup() {
 	mxconfig.clkphase        = false;                   // I2S clock phase
 	mxconfig.latch_blanking  = 1;                       // How many clock cycles to blank OE before/after LAT signal change, default is 1 clock
 
+	#ifdef IS_RICARD
+		mxconfig.driver          = HUB75_I2S_CFG::FM6124;
+		mxconfig.latch_blanking  = 5;
+	#endif
+
 	display = new MatrixPanel_I2S_DMA(mxconfig);
 
 	display->begin();  // setup display with pins as pre-defined in the library
@@ -542,6 +547,17 @@ void setup() {
 	#elif IS_PRINTER
 		int16_t map[1] = {0};
 		virtualDisp = new VirtualMatrixPanel((*display), 1, 1, 128, 32, map);
+	#elif IS_RICARD
+			int16_t map[2*3] = {
+			0, 1,
+			2, 3,
+			4, 5
+		};
+		// int16_t map[1] = {0};
+		virtualDisp = new VirtualMatrixPanel((*display), 3, 2, 32, 32, map);
+	#elif IS_64x64
+		int16_t map[1] = {0};
+		virtualDisp = new VirtualMatrixPanel((*display), 1, 1, 64, 64, map);
 	#else
 		int16_t map[1] = {0};
 		virtualDisp = new VirtualMatrixPanel((*display), 1, 1, 64, 32, map);
@@ -668,6 +684,8 @@ void setup() {
 
 	// Start advertising
 	// pServer->getAdvertising()->addServiceUUID(SERVICE_UUID);
+	pServer->getAdvertising()->addServiceUUID(SERVICE_UUID);
+	pServer->getAdvertising()->addServiceUUID(SERVICE_UUID_SPECTRE);
 	pServer->getAdvertising()->addServiceUUID(BLEOTA.getBLEOTAuuid());
 
 	pServer->getAdvertising()->start();
