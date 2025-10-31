@@ -107,7 +107,7 @@ private:
  */
 inline VirtualCoords VirtualMatrixPanel::getCoords(int16_t virt_x, int16_t virt_y)
 {
-    if (virt_x < 0 || virt_x >= virtualResX || virt_y < 0 || virt_y >= virtualResX) // _width and _height are defined in the adafruit constructor
+    if (virt_x < 0 || virt_x >= virtualResX || virt_y < 0 || virt_y >= virtualResY) // _width and _height are defined in the adafruit constructor
     {                             // Co-ordinates go from 0 to X-1 remember! otherwise they are out of range!
         coords.x = coords.y = -1; // By defalt use an invalid co-ordinates that will be rejected by updateMatrixDMABuffer
         return coords;
