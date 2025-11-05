@@ -27,16 +27,19 @@ Preferences preferences;
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
-#define SERVICE_UUID_SPECTRE          "00004242-0000-1000-8000-00805F9B34FB" // Spectre service UUID
-#define CHARACTERISTIC_UUID_FIRMWARE  "00004243-0000-1000-8000-00805F9B34FB"
-#define CHARACTERISTIC_UUID_HARDWARE  "00004244-0000-1000-8000-00805F9B34FB"
-#define CHARACTERISTIC_UUID_ENV       "00004245-0000-1000-8000-00805F9B34FB"
-#define CHARACTERISTIC_UUID_GIT       "00004246-0000-1000-8000-00805F9B34FB"
-#define CHARACTERISTIC_UUID_BRIGHT    "00004247-0000-1000-8000-00805F9B34FB"
-#define CHARACTERISTIC_UUID_MATRIX_LX "00004248-0000-1000-8000-00805F9B34FB"
-#define CHARACTERISTIC_UUID_MATRIX_LY "00004249-0000-1000-8000-00805F9B34FB"
-#define CHARACTERISTIC_UUID_MATRIX_VX "00004250-0000-1000-8000-00805F9B34FB"
-#define CHARACTERISTIC_UUID_MATRIX_VY "00004251-0000-1000-8000-00805F9B34FB"
+// Spectre service UUID (using 16-bit UUIDs for smaller advertising packets)
+#define SERVICE_UUID_SPECTRE          "4242"
+#define CHARACTERISTIC_UUID_FIRMWARE  "4243"
+#define CHARACTERISTIC_UUID_HARDWARE  "4244"
+#define CHARACTERISTIC_UUID_ENV       "4245"
+#define CHARACTERISTIC_UUID_GIT       "4246"
+#define CHARACTERISTIC_UUID_BRIGHT    "4247"
+#define CHARACTERISTIC_UUID_MATRIX_LX "4248"
+#define CHARACTERISTIC_UUID_MATRIX_LY "4249"
+#define CHARACTERISTIC_UUID_MATRIX_VX "4250"
+#define CHARACTERISTIC_UUID_MATRIX_VY "4251"
+
+#define OTA_SERVICE_UUID "8018"
 
 #define DEFAULT_HOSTNAME	HOSTNAME
 #define AP_SSID				HOSTNAME
@@ -103,7 +106,7 @@ void flip_matrix() {
 }
 
 void set_brightness(int b) {
-	brightness = constrain(b, 0, 255);
+	brightness = constrain(b, 0, 250);
 	Serial.printf("Brightness set to %d\n", brightness);
 	display->setBrightness8(brightness); //0-255
 }
@@ -238,6 +241,8 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 								list2_send_mode = true;
 							} else if (rxValue[2] == '3') {
 								list3_send_mode = true;
+							} else {
+								list_send_mode = true;
 							}
 						}
 						else {
@@ -621,7 +626,7 @@ void setup() {
 
 	Serial.println("Start BLE");
 	// Create the BLE Device
-	NimBLEDevice::init(HOSTNAME);
+	NimBLEDevice::init(hostname);
 	NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 	NimBLEDevice::setMTU(BLE_ATT_MTU_MAX);
 
@@ -677,6 +682,14 @@ void setup() {
 	BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
 	// pAdvertising->setAppearance(0x7<<6); // glasses
 	pAdvertising->setAppearance(0x01F << 6 | 0x06); // LEDs 
+
+	uint8_t* mac = (uint8_t*)NimBLEDevice::getAddress().getNative();
+	char macStr[5];
+	snprintf(macStr, sizeof(macStr), "%02X%02X", mac[4], mac[5]);
+	Serial.printf("BLE MAC Address: %s\n", macStr);
+	strcat(hostname, macStr);
+	pAdvertising->setName(hostname);
+	NimBLEDevice::setDeviceName(hostname);
 	
 	SpectreGif::init();
 	Lua::init();
@@ -684,11 +697,12 @@ void setup() {
 
 	// Start advertising
 	// pServer->getAdvertising()->addServiceUUID(SERVICE_UUID);
-	pServer->getAdvertising()->addServiceUUID(SERVICE_UUID);
-	pServer->getAdvertising()->addServiceUUID(SERVICE_UUID_SPECTRE);
-	pServer->getAdvertising()->addServiceUUID(BLEOTA.getBLEOTAuuid());
+	// NimBLEAdvertising* adv = pServer->getAdvertising();
+	pAdvertising->addServiceUUID(SERVICE_UUID_SPECTRE);
+	pAdvertising->addServiceUUID(OTA_SERVICE_UUID);
+	pAdvertising->addServiceUUID(SERVICE_UUID);
 
-	pServer->getAdvertising()->start();
+	pAdvertising->start();
 	Serial.println("Waiting a client connection to notify...");
 }
 
