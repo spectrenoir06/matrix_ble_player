@@ -1,10 +1,12 @@
 #include <LuaWrapper.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <atomic>
+#include <multi_heap.h>
 #include <Mapping.h>
 
 extern MatrixPanel_I2S_DMA *display;
-extern int sendBLE(const char*);
+#include "Arena.hpp"
+#include "Protocol.hpp"
 extern void flip_matrix();
 extern VirtualMatrixPanel *virtualDisp;
 
@@ -14,6 +16,17 @@ namespace {
 
   static TaskHandle_t runLuaTaskHandle = NULL;
   std::atomic<String*> current_lua_script(nullptr);
+  std::atomic<bool> lua_running(false);  // the task may be using the arena
+
+  // Lua allocator on a private heap laid over the shared arena
+  void *arena_alloc(void *ud, void *ptr, size_t osize, size_t nsize) {
+    multi_heap_handle_t heap = static_cast<multi_heap_handle_t>(ud);
+    if (nsize == 0) {
+      multi_heap_free(heap, ptr);
+      return nullptr;
+    }
+    return ptr ? multi_heap_realloc(heap, ptr, nsize) : multi_heap_malloc(heap, nsize);
+  }
 
   static int lua_wrapper_updateDisplay(lua_State *lua_state) {
     flip_matrix();
@@ -42,19 +55,10 @@ namespace {
   }
 
   static int lua_wrapper_printBLE(lua_State *lua_state) {
-    size_t len = 0;
-    const char *lstr = luaL_checklstring(lua_state, 1, &len);
-    int ret = 0;
-    if (len > 0) {
-      char *str = (char*)malloc(len+3);
-      str[0] = '!';
-      str[1] = '#';
-      memcpy(str+2, lstr, len);
-      str[len+2] = '\x00';
-      ret = sendBLE(str);
-      free(str);
-    }
-    return ret;
+    // Lua print to the connected client (sys.log event)
+    const char *lstr = luaL_checkstring(lua_state, 1);
+    protocol_log(LogLevel::Info, lstr);
+    return 0;
   }
 
   static int lua_wrapper_clearDisplay(lua_State *lua_state) {
@@ -156,7 +160,18 @@ namespace {
     display->clearScreen();
     display->flipDMABuffer();
 
-    LuaWrapper lua;
+    String* str = current_lua_script.exchange(nullptr, std::memory_order_acq_rel);
+    if (str == nullptr)  // stopped before it started
+      return;
+
+    // A fresh heap over the arena for each script: lua_close frees it all
+    multi_heap_handle_t heap = multi_heap_register(Arena::data(), Arena::SIZE);
+    if (!heap) {
+      delete str;
+      protocol_log(LogLevel::Error, "lua: no memory");
+      return;
+    }
+    LuaWrapper lua(arena_alloc, heap);
     lua.Lua_register("clearDisplay",   (const lua_CFunction) &lua_wrapper_clearDisplay);
     lua.Lua_register("fillDisplay",    (const lua_CFunction) &lua_wrapper_fillDisplay);
     lua.Lua_register("updateDisplay",  (const lua_CFunction) &lua_wrapper_updateDisplay);
@@ -177,7 +192,6 @@ namespace {
     lua.Lua_register("getMatrix",      (const lua_CFunction) &lua_wrapper_getMatrix);
     
     Serial.println("Start task runLuaTask");
-    String* str = current_lua_script.exchange(nullptr, std::memory_order_acq_rel);
     spectre_lua_plz_stop = 0;
     String ret = lua.Lua_dostring(str);
     delete str;
@@ -186,24 +200,21 @@ namespace {
       // ignore.
       return;
     }
-    size_t len = 2 + strlen(ret.c_str()) + 1;
-    if (len > 3) {
+    if (ret.length() > 0) {
       Serial.println(ret);
-      char *errstr = (char*)malloc(len);
-      errstr[0] = '\x00';
-      strcat(errstr, "!S");
-      strcat(errstr, ret.c_str());
-      sendBLE(errstr);
-      free(errstr);
+      protocol_log(LogLevel::Error, ret.c_str());
     }
   }
 
   void runLuaTask(void* parameter) {
     // Infinite loop :-)
     for(;;) {
+      // Mark busy *before* looking for a script, so stop() can't miss us.
+      lua_running = true;
       if (current_lua_script.load() != nullptr) {
         lua_exec();
       }
+      lua_running = false;
       vTaskDelay(1 / portTICK_PERIOD_MS);
     };
   }
@@ -226,8 +237,13 @@ namespace Lua {
     return ret;
   }
 
-  void stop() {
+  bool stop() {
+    String* pending = current_lua_script.exchange(nullptr, std::memory_order_acq_rel);
+    delete pending;
     spectre_lua_plz_stop = 1;
+    for (int i = 0; i < 2000 && lua_running; i++)
+      vTaskDelay(1 / portTICK_PERIOD_MS);
+    return !lua_running;
   }
 
   void run_script(String script) {

@@ -8,10 +8,11 @@ namespace Lua {
   BaseType_t init();
 
   /**
-   * Kindly ask the lua interpreter to stop execution of the current script.
-   * It is safe to call this function even if no script is currently running.
+   * Stop the running script (and drop a queued one), then wait until the Lua
+   * task has released the arena. Returns false if it did not within 2 s
+   * (e.g. a script stuck in a long delay()).
    */
-  void stop();
+  bool stop();
 
   /**
    * Run the supplied script.

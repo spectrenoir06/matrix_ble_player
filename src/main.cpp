@@ -17,28 +17,13 @@ Preferences preferences;
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <NimBLEDevice.h>
 #include "BLEOTA.h"
+#include "Arena.hpp"
 #include "Gif.hpp"
 #include "Lua.hpp"
+#include "Protocol.hpp"
 
-#define LED_SIZE 3
-#define LED_TOTAL (MATRIX_WIDTH*V_MATRIX_HEIGHT)
-
-#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
-#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
-#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
-
-// Spectre service UUID (using 16-bit UUIDs for smaller advertising packets)
-#define SERVICE_UUID_SPECTRE          "4242"
-#define CHARACTERISTIC_UUID_FIRMWARE  "4243"
-#define CHARACTERISTIC_UUID_HARDWARE  "4244"
-#define CHARACTERISTIC_UUID_ENV       "4245"
-#define CHARACTERISTIC_UUID_GIT       "4246"
-#define CHARACTERISTIC_UUID_BRIGHT    "4247"
-#define CHARACTERISTIC_UUID_MATRIX_LX "4248"
-#define CHARACTERISTIC_UUID_MATRIX_LY "4249"
-#define CHARACTERISTIC_UUID_MATRIX_VX "4250"
-#define CHARACTERISTIC_UUID_MATRIX_VY "4251"
-
+// Advertised so clients can spot Spectre devices (spectre_protocol PROTOCOL.md §1.1)
+#define ADV_UUID_SPECTRE "4242"
 #define OTA_SERVICE_UUID "8018"
 
 #define DEFAULT_HOSTNAME	HOSTNAME
@@ -55,51 +40,13 @@ MatrixPanel_I2S_DMA *display = nullptr;
 
 char	hostname[50] = DEFAULT_HOSTNAME;
 
-uint8_t* img_buffer = NULL;
 uint8_t brightness = BRIGHTNESS;
 File root;
 
-NimBLECharacteristic* pTxCharacteristic;
-bool deviceConnected = false;
-bool oldDeviceConnected = false;
-uint8_t txValue = 0;
-uint8_t image_receive_mode = false;
-uint8_t gif_receive_mode = false;
-uint8_t lua_receive_mode = false;
-uint32_t byte_to_store = 0;
-uint32_t data_size = 0;
-uint32_t img_receive_width = 0;
-uint32_t img_receive_height = 0;
-uint32_t img_receive_color_depth = 0;
-File f_tmp;
-uint8_t change_anim = 0;
-int timeout_var = 0;
-#define timeout_time 3000; // ms
-int time_reveice = 0;
-String lua_script = "";
-uint8_t list_send_mode = false;
-
-uint8_t list2_send_mode = false;
-uint8_t list3_send_mode = false;
-
-uint8_t gif_send_mode = false;
-File gif_send_file;
-int MTU = BLE_ATT_MTU_MAX;
-uint32_t gif_send_tosend = 0;
-
-uint8_t button_isPress = 0;
 VirtualMatrixPanel  *virtualDisp = nullptr;
 uint8_t is_fs_mnt = false;
 
 NimBLEServer* pServer;
-
-int sendBLE(const char *cstr) {
-	if (deviceConnected) {
-		pTxCharacteristic->setValue((uint8_t*)cstr, strlen(cstr));
-		pTxCharacteristic->notify();
-	}
-	return 0;
-}
 
 void flip_matrix() {
 	display->flipDMABuffer();
@@ -153,345 +100,20 @@ void print_message(const char *str) {
 }
 class MyServerCallbacks : public NimBLEServerCallbacks {
 	void onConnect(NimBLEServer* pServer, ble_gap_conn_desc *desc) {
-		deviceConnected = true;
+		// 7.5 ms interval + 251-byte packets: fastest BLE uploads (spectre_protocol bench)
 		pServer->updateConnParams(desc->conn_handle, 0x6, 0x6, 0, 100);
 		pServer->setDataLen(desc->conn_handle, 251);
-		Serial.printf("conn_itvl: %d, conn_latency: %d\n");
+		Serial.printf("BLE connected\n");
 	};
 
 	void onDisconnect(NimBLEServer* pServer) {
-		deviceConnected = false;
+		protocol_disconnected();
 	}
 
 	void onMTUChange (uint16_t mtu, ble_gap_conn_desc *desc) {
 		Serial.printf("MTU change: %d\n", mtu);
-		NimBLEDevice::setMTU(mtu);
-		MTU = mtu;
 	}
 };
-	
-
-class MyCallbacks : public NimBLECharacteristicCallbacks {
-	void onWrite(NimBLECharacteristic* pCharacteristic) {
-		std::string rxValue = pCharacteristic->getValue();
-		Serial.printf("Received Value: %d:\n, ", rxValue.length());
-		// for (int i = 0; i < rxValue.length(); i++)
-			// Serial.print(rxValue[i]);
-		// Serial.println();
-
-		if (rxValue.length() > 0 && rxValue[0] == '!' && !image_receive_mode && !gif_receive_mode) {
-			switch (rxValue[1]) {
-				case 'B':  // Image display 
-					switch (rxValue[2]) {
-						case '1':
-							// if (rxValue[3] == '1')
-							// 	next_anim = 1;
-							break;
-						case '5':
-								set_brightness(brightness+2);
-							break;
-						case '6':
-							if (rxValue[3] == '1')
-								set_brightness(brightness-2);
-							break;
-						case '2':
-							if (rxValue[3] == '1') {
-								SpectreGif::stop();
-								set_all_pixel(0, 0, 0, 255);
-							}
-							break;
-						default:
-							break;
-					}
-					break;
-				case 'C':  // Color display 
-					Lua::stop();
-					set_all_pixel(rxValue[2], rxValue[3], rxValue[4], 0);
-					break;
-				case 'I': // Image display 
-					{
-						Lua::stop();
-						SpectreGif::stop();
-						img_receive_color_depth = rxValue[2];
-						img_receive_width = rxValue[3] + (rxValue[4] << 8);
-						img_receive_height = rxValue[5] + (rxValue[6] << 8);
-						Serial.printf("Image: depth: %d, %dX%d\n", img_receive_color_depth, img_receive_width, img_receive_height);
-						image_receive_mode = true;
-						byte_to_store = 0;
-						data_size = img_receive_width * img_receive_height * (img_receive_color_depth / 8);
-						if (img_buffer)
-							free(img_buffer);
-						img_buffer = (uint8_t*)malloc(data_size+1);
-						if (!img_buffer) {
-							print_message("not enought ram\n");
-							break;
-						}
-
-						for (int i = 7; i < rxValue.length(); i++) {
-							img_buffer[byte_to_store++] = rxValue[i];
-
-						}
-						timeout_var = millis() + timeout_time;
-					}
-					break;
-				case 'L': // List files
-					{
-						if (rxValue.length() > 2) {
-							if (rxValue[2] == '2'){
-								list2_send_mode = true;
-							} else if (rxValue[2] == '3') {
-								list3_send_mode = true;
-							} else {
-								list_send_mode = true;
-							}
-						}
-						else {
-							list_send_mode = true;
-						}
-					}
-					break;
-				case 'D': // delete file
-					{
-						const char* data = rxValue.c_str();
-						char str[255];
-						memset(str, 0, 255);
-						strcat(str, "/GIF/");
-						strcat(str, data+2);
-						Serial.printf("Remove %s\n", str);
-						if (SpectreGif::isPlaying(str)) {
-							Serial.printf("The gif is playing\n");
-							SpectreGif::stop();
-						}
-						filesystem.remove(str);
-					}
-					break;
-				case 'G': // add file
-					{
-						Lua::stop();
-						SpectreGif::stop();
-						const char* data = rxValue.c_str();
-						char str[255];
-						memset(str, 0, 255);
-						strcat(str, "/GIF/");
-						strcat(str, data + 2 + 4);
-						Serial.printf("add %s\n", data + 2 + 4);
-						f_tmp = filesystem.open(str, "w", true);
-						int len = strlen(data + 2 + 4);
-						data_size = *(uint32_t*)(data + 2);
-						byte_to_store = 0;
-						Serial.printf("gif size = %d\n", data_size);
-						for (int i = 2 + 4 + len + 1; i < rxValue.length(); i++) {
-							f_tmp.write(rxValue[i]);
-							byte_to_store++;
-						}
-						timeout_var = millis() + timeout_time;
-						time_reveice = millis();
-						flip_matrix();
-						gif_receive_mode = true;
-					}
-					break;
-				case 'U':
-					{
-						const char* data = rxValue.c_str();
-						char str[255];
-						memset(str, 0, 255);
-						strcat(str, "/GIF/");
-						strcat(str, data+2+4);
-						char *ptr = strchr(str, '\n');
-						if (ptr)
-							*ptr = 0;
-						gif_send_file = filesystem.open(str);
-						gif_send_tosend = *((uint32_t*)(data+2));
-						if (gif_send_file.size() < gif_send_tosend)
-							gif_send_tosend = gif_send_file.size();
-						for (int i = 0; i < rxValue.length(); i++)
-							Serial.print(rxValue[i]);
-						Serial.println();
-						Serial.printf("Upload %s, size %d\n", str, gif_send_tosend);
-						SpectreGif::stop();
-						gif_send_mode = true;
-					}
-					break;
-				case 'P': // Play a store gif
-					{
-						const char* data = rxValue.c_str();
-						char str[255];
-						memset(str, 0, 255);
-						strcat(str, "/GIF/");
-						strcat(str, data+2);
-						char *ptr = strchr(str, '\n');
-						if (ptr)
-							*ptr = 0;
-						Serial.printf("Open %s\n", str);
-						Lua::stop();
-						File file = filesystem.open(str);
-						preferences.putString("anim", file.path());
-						SpectreGif::play(file.path());
-					}
-					break;
-				case 'S': // Lua receive
-					{
-						SpectreGif::stop();
-						const char* data = rxValue.c_str();
-						data_size = *(uint32_t*)(data + 2);
-						Serial.printf("load lua size:%d\n", data_size);
-						byte_to_store = 0;
-						Lua::stop();
-						lua_script = "";
-						for (int i = 2 + 4; i < rxValue.length(); i++) {
-							lua_script += rxValue[i];
-							byte_to_store++;
-						}
-						timeout_var = millis() + timeout_time;
-						time_reveice = millis();
-						lua_receive_mode = true;
-					}
-					break;
-				case 'E': // brightness
-					{
-						const char* data = rxValue.c_str();
-						brightness = atoi(data+2);
-						set_brightness(brightness);
-					}
-					break;
-				default:
-					{
-						Serial.printf("default switch\n");
-						for (int i = 0; i < rxValue.length(); i++)
-							Serial.print(rxValue[i]);
-						Serial.println();
-					}
-					break;
-			}
-		}
-		else if (image_receive_mode) {
-			for (int i = 0; i < rxValue.length(); i++) {
-				if (byte_to_store < (LED_TOTAL * LED_SIZE))
-					img_buffer[byte_to_store] = rxValue[i];
-				byte_to_store++;
-			}
-		}
-		else if (gif_receive_mode) {
-			for (int i = 0; i < rxValue.length(); i++) {
-				f_tmp.write(rxValue[i]);
-				byte_to_store++;
-			}
-		}
-		else if (lua_receive_mode) {
-			for (int i = 0; i < rxValue.length(); i++) {
-				lua_script += rxValue[i];
-				byte_to_store++;
-			}
-		}
-
-		if (image_receive_mode) {
-			Serial.printf("Byte receive: %d, wait: %d\n", byte_to_store, data_size - byte_to_store);
-			int off_x = (MATRIX_WIDTH  - img_receive_width )/2;
-			int off_y = (MATRIX_HEIGHT - img_receive_height)/2;
-			timeout_var = millis() + timeout_time;
-			if (byte_to_store >= data_size) {
-				Serial.printf("Image complete\n");
-				display->fillScreenRGB888(0, 0, 0);
-				for (int i = 0; i < (img_receive_width * img_receive_height); i++) {
-					if (img_receive_color_depth == 16)
-						display->drawPixel(off_x + (i) % img_receive_width, off_y + (i) / img_receive_width, img_buffer[i * 2] + (img_buffer[i * 2 + 1] << 8));
-					else
-						display->drawPixelRGB888(off_x + (i) % img_receive_width, off_y + (i) / img_receive_width, img_buffer[i * 3], img_buffer[i * 3 + 1], img_buffer[i * 3 + 2]);
-				}
-				flip_matrix();
-				free(img_buffer);
-				img_buffer = nullptr;
-				image_receive_mode = false;
-				timeout_var = 0;
-			}
-			else {
-				print_progress("load img:", byte_to_store, data_size);
-			}
-		}
-
-		if (gif_receive_mode) {
-			Serial.printf("Byte receive: %d, wait: %d\n", byte_to_store, data_size - byte_to_store);
-			timeout_var = millis() + timeout_time;
-			if (byte_to_store >= data_size) {
-				gif_receive_mode = false;
-				Serial.printf("receive GIF OK\n");
-				preferences.putString("anim", f_tmp.path());
-				SpectreGif::play(f_tmp.path());
-				f_tmp.close();
-				timeout_var = 0;
-				Serial.printf("time to receive gif: %dms\n", millis() - time_reveice);
-			}
-			else {
-				print_progress("load gif:", byte_to_store, data_size);
-			}
-		}
-		
-
-		if (lua_receive_mode) {
-			Serial.printf("Byte receive: %d, wait: %d\n", byte_to_store, data_size - byte_to_store);
-			timeout_var = millis() + timeout_time;
-			if (byte_to_store >= data_size) {
-				lua_receive_mode = false;
-				Serial.printf("receive Lua OK\n");
-				Serial.printf("time to receive Lua: %dms\n", millis() - time_reveice);
-				timeout_var = 0;
-				Serial.println("[APP] Free memory: " + String(esp_get_free_heap_size()) + " bytes");
-				Lua::run_script(lua_script);
-			}
-			else {
-				// print_progress("load lua:", byte_to_store, data_size);
-			}
-		}
-	}
-};
-
-class MyCallbacks2 : public NimBLECharacteristicCallbacks {
-	// void onNotify(NimBLECharacteristic* pCharacteristic) {
-    //     Serial.println("Sending notification to clients");
-    // };
-
-    /**
-     *  The value returned in code is the NimBLE host return code.
-     */
-    void onStatus(NimBLECharacteristic* pCharacteristic, int code) {
-        String str = ("Notification/Indication return code: ");
-        str += code;
-        str += ", ";
-        str += NimBLEUtils::returnCodeToString(code);
-        Serial.println(str);
-    };
-};
-
-
-
-
-// void load_anim(File file) {
-// 	Serial.printf("load_anim !\n");
-// 	if (!file) {
-// 		print_message("Can't find\nGif file!");
-// 		delay(1000);
-// 		return;
-// 	}
-// 	Serial.printf("Open animation: '%s'\n", file.path());
-// 	display->clearScreen();
-	
-// 	SpectreGif::play(file.path());
-// 	Serial.print("load anim: ");
-// 	Serial.print(file.name());
-// 	Serial.print("\tsize: ");
-// 	Serial.print(file.size() / (1024.0 * 1024.0));
-// 	Serial.println(" Mo");
-
-// 	if (deviceConnected) {
-// 		char str[100];
-// 		memset(str, 0, 100);
-// 		strcat(str, "!P");
-// 		strcat(str, file.name());
-// 		strcat(str, "\r\n");
-// 		pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
-// 		pTxCharacteristic->notify();
-// 	}
-// }
 
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define BUF_SIZE (256*1)
@@ -542,6 +164,9 @@ void setup() {
 
 	display->begin();  // setup display with pins as pre-defined in the library
 
+	// GIF / PNG / Lua memory, while the heap is still in one piece
+	bool arena_ok = Arena::init();
+
 	#ifdef IS_CROSS
 		int16_t map[3*3] = {
 			-1, 4, -1,
@@ -569,6 +194,10 @@ void setup() {
 	#endif
 
 	set_brightness(BRIGHTNESS);
+	if (!arena_ok) {
+		print_message("No RAM\nfor player");
+		delay(2000);
+	}
 
 	#ifdef USE_SD
 		// Initialize SD card
@@ -596,6 +225,7 @@ void setup() {
 		}
 	#endif
 
+	String boot_anim;  // played once GIF / Lua tasks exist
 	if (is_fs_mnt) {
 		root = filesystem.open("/GIF");
 		preferences.begin("matrix", false);
@@ -604,7 +234,7 @@ void setup() {
 			File file = filesystem.open(str);
 			if (file.size() > 0) {
 				Serial.printf("Start previous anim %s, %s\n", str, file.path());
-				SpectreGif::play(file.path());
+				boot_anim = file.path();
 			} else {
 				print_message("Gif\nnot loaded");
 			}
@@ -639,45 +269,7 @@ void setup() {
 	BLEOTA.begin(pServer);
 	BLEOTA.init();
 
-	// Create the BLE Service UART
-	NimBLEService* pService = pServer->createService(SERVICE_UUID);
-
-	// Create a BLE Characteristic UART TX
-	pTxCharacteristic = pService->createCharacteristic(
-		CHARACTERISTIC_UUID_TX,
-		NIMBLE_PROPERTY::NOTIFY
-	);
-
-	// Create a BLE Characteristic  UART RX
-	BLECharacteristic* pRxCharacteristic = pService->createCharacteristic(
-		CHARACTERISTIC_UUID_RX,
-		NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::READ// | NIMBLE_PROPERTY::WRITE_NR
-	);
-
-	pRxCharacteristic->setCallbacks(new MyCallbacks());
-	pTxCharacteristic->setCallbacks(new MyCallbacks2());
-
-	// Start the service
-	pService->start();
-
-
-
-	// Create the BLE Service UART
-	NimBLEService* pService2 = pServer->createService(SERVICE_UUID_SPECTRE);
-
-	// Create a BLE Characteristic
-	pService2->createCharacteristic(CHARACTERISTIC_UUID_FIRMWARE,  NIMBLE_PROPERTY::READ)->setValue((uint8_t*)"1.0.0", strlen("1.0.0"));
-	// pService2->createCharacteristic(CHARACTERISTIC_UUID_HARDWARE,  NIMBLE_PROPERTY::READ);
-	// pService2->createCharacteristic(CHARACTERISTIC_UUID_ENV,       NIMBLE_PROPERTY::READ);
-	pService2->createCharacteristic(CHARACTERISTIC_UUID_GIT,       NIMBLE_PROPERTY::READ)->setValue((uint8_t*)BUILD_GIT_COMMIT_HASH, strlen(BUILD_GIT_COMMIT_HASH));
-	pService2->createCharacteristic(CHARACTERISTIC_UUID_BRIGHT,    NIMBLE_PROPERTY::READ)->setValue(brightness);
-	pService2->createCharacteristic(CHARACTERISTIC_UUID_MATRIX_LX, NIMBLE_PROPERTY::READ)->setValue(MATRIX_WIDTH);
-	pService2->createCharacteristic(CHARACTERISTIC_UUID_MATRIX_LY, NIMBLE_PROPERTY::READ)->setValue(MATRIX_HEIGHT);
-	pService2->createCharacteristic(CHARACTERISTIC_UUID_MATRIX_VX, NIMBLE_PROPERTY::READ)->setValue(V_MATRIX_WIDTH);
-	pService2->createCharacteristic(CHARACTERISTIC_UUID_MATRIX_VY, NIMBLE_PROPERTY::READ)->setValue(V_MATRIX_HEIGHT);
-
-	pService2->start();
-
+	protocol_begin(pServer);
 
 	BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
 	// pAdvertising->setAppearance(0x7<<6); // glasses
@@ -694,13 +286,12 @@ void setup() {
 	SpectreGif::init();
 	Lua::init();
 	Serial.println("::init() OK");
+	if (boot_anim.length())
+		play_file(boot_anim.c_str());
 
 	// Start advertising
-	// pServer->getAdvertising()->addServiceUUID(SERVICE_UUID);
-	// NimBLEAdvertising* adv = pServer->getAdvertising();
-	pAdvertising->addServiceUUID(SERVICE_UUID_SPECTRE);
+	pAdvertising->addServiceUUID(ADV_UUID_SPECTRE);
 	pAdvertising->addServiceUUID(OTA_SERVICE_UUID);
-	pAdvertising->addServiceUUID(SERVICE_UUID);
 
 	pAdvertising->start();
 	Serial.println("Waiting a client connection to notify...");
@@ -708,207 +299,11 @@ void setup() {
 
 void loop(void) {
 	//Serial.printf("loop %s \n", root.path());
+	protocol_loop();
 	BLEOTA.process();
 	if (is_fs_mnt && !root) {
 		print_message("Can't find\nGif folder!\n");
 		vTaskDelay(1000 / portTICK_PERIOD_MS);
-	}
-
-	// Check for timeouts
-	if (timeout_var != 0 && millis() > timeout_var) {
-		image_receive_mode = false;
-		gif_receive_mode = false;
-		lua_receive_mode = false;
-		Serial.printf("timeout\n");
-		timeout_var = 0;
-		if (img_buffer) {
-			free(img_buffer);
-			img_buffer = nullptr;
-		}
-	}
-
-	if (list_send_mode) {
-		Serial.printf("Print list files:\n");
-		File tmp_root = filesystem.open("/GIF");
-		File tmp_file = tmp_root.openNextFile();
-		char str[255];
-		while(tmp_file) {
-			memset(str, 0, 255);
-			strcat(str, "!L");
-			strcat(str, tmp_file.name());
-			pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
-			pTxCharacteristic->notify();
-			// Serial.println(str);
-			tmp_file = tmp_root.openNextFile();
-		}
-		memset(str, 0, 255);
-		strcat(str, "!L!");
-		pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
-		pTxCharacteristic->notify();
-		list_send_mode = false;
-	}
-
-	if (list2_send_mode) {
-		Serial.printf("Print list2 files:\n");
-		pTxCharacteristic->notify((uint8_t*)"!L2", 3);
-		File tmp_root = filesystem.open("/GIF");
-		String tmp_filename = tmp_root.getNextFileName();
-		const char *name = tmp_filename.c_str();
-		char *str = (char*)malloc((MTU-10));
-		char *ptr = str;
-		uint32_t pqt_size = 0;
-		while(tmp_filename.length() > 0) {
-			uint32_t name_size = strlen(name) + 1 - 5;
-			if ((pqt_size + name_size) > (MTU-10)) { // pqt full need to send
-				pTxCharacteristic->notify((uint8_t*)str, pqt_size);
-				Serial.printf("send: %d\n", pqt_size);
-				pqt_size = 0;
-			}
-			memcpy(str + pqt_size, name+5, name_size);
-			pqt_size += name_size;
-			tmp_filename = tmp_root.getNextFileName();
-			name = tmp_filename.c_str();
-		}
-
-		if (pqt_size > 0) { // still data to send
-			pTxCharacteristic->notify((uint8_t*)str, pqt_size);
-		}
-		pTxCharacteristic->notify((uint8_t*)"!L2!", 4);
-		list2_send_mode = false;
-	}
-
-	if (list3_send_mode) {
-		Serial.printf("Print list3 files:\n");
-		pTxCharacteristic->notify((uint8_t*)"!L3", 3);
-		File tmp_root = filesystem.open("/GIF");
-		File tmp_file = tmp_root.openNextFile();
-		char *str = (char*)malloc(500);
-		char *ptr = str;
-		uint32_t pqt_size = 0;
-		while(tmp_file) {
-			const char *name = tmp_file.name();
-			uint32_t name_size = strlen(name) + 1;
-			uint32_t file_size = tmp_file.size();
-			Serial.printf("%s, %d\n", name, file_size);
-
-			if ((pqt_size + name_size + 4) > (MTU-10)) { // pqt full need to send
-				pTxCharacteristic->notify((uint8_t*)str, pqt_size);
-				Serial.printf("send: %d\n", pqt_size);
-				pqt_size = 0;
-			}
-
-			memcpy(str + pqt_size, name, name_size);
-			pqt_size += name_size;
-			memcpy(str + pqt_size, &file_size, 4);
-			pqt_size += 4;
-			tmp_file = tmp_root.openNextFile();
-		}
-
-		if (pqt_size > 0) { // still data to send
-			pTxCharacteristic->notify((uint8_t*)str, pqt_size);
-		}
-		pTxCharacteristic->notify((uint8_t*)"!L3!", 4);
-		free(str);
-		list3_send_mode = false;
-	}
-
-	// if (list2_send_mode) {
-	// 	Serial.printf("Print list2 files:\n");
-	// 	pTxCharacteristic->notify((uint8_t*)"!L2", 3);
-	// 	// File tmp_root = filesystem.open("/GIF");
-		
-	// 	DIR *dirp;
-    // 	struct dirent *dp;
-	// 	char str[500];
-	// 	char *ptr = str;
-	// 	uint32_t pqt_size = 0;
-
-	// 	if ((dirp = opendir("/GIF")) == NULL) {
-	// 		Serial.printf("couldn't open 'GIF'");
-	// 		list2_send_mode = false;
-	// 		return;
-	// 	}
-
-	// 	do {
-	// 		if ((dp = readdir(dirp)) != NULL) {
-	// 			dp->d_name;
-	// 			const char *name = dp->d_name;
-	// 			uint32_t name_size = strlen(name) + 1;
-
-
-	// 			struct stat st;
-	// 			if (stat(name, &st) == 0)
-	// 			{
-	// 				Serial.printf("File size:%ld\n", st.st_size);
-	// 			}
-	// 			uint32_t file_size = st.st_size;
-
-	// 			Serial.printf("%s, %d\n", name, file_size);
-
-	// 			if ((pqt_size + name_size + 4) > sizeof(str)) { // pqt full need to send
-	// 				pTxCharacteristic->notify((uint8_t*)str, pqt_size);
-	// 				Serial.printf("send: %d\n", pqt_size);
-	// 				pqt_size = 0;
-	// 			}
-	// 			memcpy(str + pqt_size, name, name_size);
-	// 			pqt_size += name_size;
-	// 			memcpy(str + pqt_size, &file_size, 4);
-	// 			pqt_size += 4;
-	// 			(void)closedir(dirp);
-
-	// 		}
-	// 	} while (dp != NULL);
-
-
-	// 	// File tmp_file = tmp_root.openNextFile();
-	// 	// while(tmp_file) {
-
-	// 	// 	tmp_file = tmp_root.openNextFile();
-	// 	// }
-
-	// 	if (pqt_size > 0) { // still data to send
-	// 		pTxCharacteristic->notify((uint8_t*)str, pqt_size);
-	// 	}
-	// 	pTxCharacteristic->notify((uint8_t*)"!L2!", 4);
-	// 	list2_send_mode = false;
-	// }
-
-	if (gif_send_mode) {
-		// gif_send_mode = false;
-		uint32_t fragment_size = MTU-10 ;  // MTU-3
-		// Serial.printf("send gif over BLE: MTU = %d\n", fragment_size);
-		uint8_t *buff = (uint8_t*)malloc(fragment_size);
-		size_t size = 0;
-		uint32_t pqt_nb = 0;
-		uint32_t data_to_send = gif_send_tosend;
-		do {
-			size = gif_send_file.read(buff, fragment_size);
-			// Serial.printf("read: %d, to_send %d\n", size, data_to_send);
-
-			if (size > 0) {
-				if (data_to_send > size) {
-					data_to_send -= size;
-				} else {
-					data_to_send = 0;
-				}
-				// pTxCharacteristic->setValue(buff, size);
-				// pTxCharacteristic->notify();
-				pTxCharacteristic->notify(buff, size, true);
-				pqt_nb++;
-				// if ((pqt_nb % 1) == 0) {
-					print_progress(gif_send_file.name(), gif_send_tosend-data_to_send, gif_send_tosend);
-				// }
-				vTaskDelay(10 / portTICK_PERIOD_MS);
-			}
-
-		} while (size > 0 && data_to_send > 0 && deviceConnected);
-		Serial.printf("total pqt: %d\n", pqt_nb);
-		vTaskDelay(100 / portTICK_PERIOD_MS);
-		// pTxCharacteristic->setValue((const uint8_t*)"!U!", strlen("!U!"));
-		pTxCharacteristic->notify((const uint8_t*)"!U!", strlen("!U!"), false);
-		free(buff);
-		gif_send_file.close();
-		gif_send_mode = false;
 	}
 
 	vTaskDelay(1 / portTICK_PERIOD_MS);

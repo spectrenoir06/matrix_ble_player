@@ -25,6 +25,15 @@ extern "C" {
 
 LuaWrapper::LuaWrapper() {
   _state = luaL_newstate();
+  openLibs();
+}
+
+LuaWrapper::LuaWrapper(lua_Alloc alloc, void *ud) {
+  _state = lua_newstate(alloc, ud);
+  openLibs();
+}
+
+void LuaWrapper::openLibs() {
   luaopen_base(_state);
   luaopen_table(_state);
   luaopen_string(_state);

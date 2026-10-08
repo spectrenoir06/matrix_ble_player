@@ -2,6 +2,9 @@
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <Mapping.h>
 #include <atomic>
+#include <new>
+
+#include "Arena.hpp"
 
 #ifdef USE_SD
 #include "FS.h"
@@ -99,11 +102,14 @@ extern void flip_matrix();
 uint8_t disposalMethod = 0;
 
 namespace {
-  static AnimatedGIF gif;
+  // Constructed in the shared arena when a GIF starts, nullptr when stopped.
+  static AnimatedGIF *gif = nullptr;
+  static_assert(sizeof(AnimatedGIF) <= Arena::SIZE, "GIF decoder does not fit in the arena");
   static TaskHandle_t task = NULL;
   static File current_gif_file;
   static uint32_t next_frame_millis = 0;
-  static int spectre_gif_plz_stop = 1;
+  static std::atomic<bool> stop_requested(true);
+  static std::atomic<bool> active(false);  // the task may be using the arena
   static std::atomic<char*> next_gif_file(nullptr);
 
   // Draw a line of image directly on the LED Matrix
@@ -117,8 +123,8 @@ namespace {
     if (iWidth > V_MATRIX_WIDTH)
       iWidth = V_MATRIX_WIDTH;
 
-    int off_x = (V_MATRIX_WIDTH  - gif.getCanvasWidth() )/2;
-    int off_y = (V_MATRIX_HEIGHT - gif.getCanvasHeight())/2;
+    int off_x = (V_MATRIX_WIDTH  - gif->getCanvasWidth() )/2;
+    int off_y = (V_MATRIX_HEIGHT - gif->getCanvasHeight())/2;
 
     usPalette = (CRGB*)pDraw->pPalette24;
     y = pDraw->iY + pDraw->y; // current line
@@ -179,16 +185,30 @@ namespace {
     uint8_t more_frame = 0;
     for (;;) {
       vTaskDelay(1 / portTICK_PERIOD_MS);
-      if (spectre_gif_plz_stop) continue;
+      // Mark busy *before* checking for a stop, so stop() can't miss us.
+      active = true;
+      if (stop_requested) {
+        if (gif) {  // release the arena
+          gif->close();
+          gif = nullptr;
+        }
+        active = false;
+        continue;
+      }
       if (next_gif_file.load() != nullptr) {
         char* fp = next_gif_file.exchange(nullptr, std::memory_order_acq_rel);
         if (fp != nullptr) {
+          if (gif)
+            gif->close();
           if (current_gif_file) { // close old gif file
             current_gif_file.close();
           }
+          // the arena may have been used by PNG / Lua since: build a fresh decoder
+          gif = new (Arena::data()) AnimatedGIF();
+          gif->begin(GIF_PALETTE_RGB888);
+          next_frame_ready = 0;
           // fp will be freed by GIFOpenFile
-          if(gif.open(fp, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
-            spectre_gif_plz_stop = 0;
+          if(gif->open(fp, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
             next_frame_millis = 0;
             // clear both buffers
             virtualDisp->clearScreen();
@@ -196,14 +216,17 @@ namespace {
             virtualDisp->clearScreen();
           } else {
             // error
-            spectre_gif_plz_stop = 1;
+            gif = nullptr;
+            stop_requested = true;
             continue;
           }
         }
       }
+      if (!gif)
+        continue;
   
       if (!next_frame_ready) {
-        more_frame = gif.playFrame(false, &i);
+        more_frame = gif->playFrame(false, &i);
         next_frame_ready = 1;
       }
 
@@ -211,7 +234,7 @@ namespace {
       if (t >= next_frame_millis) {
         next_frame_millis = millis() + i;
         if (!more_frame) {
-          gif.reset();
+          gif->reset();
           flip_matrix();
           virtualDisp->clearScreen();
         } else {
@@ -242,11 +265,10 @@ namespace SpectreGif {
     if (old_fp != NULL) {
       free(old_fp);
     }
-    spectre_gif_plz_stop = 0;
+    stop_requested = false;
   }
 
   uint8_t init() {
-    gif.begin(GIF_PALETTE_RGB888);
     return xTaskCreate(
         gifTask,   /* Task function. */
         "GifTask", /* String with name of task. */
@@ -256,13 +278,16 @@ namespace SpectreGif {
         &task);           /* Task handle. */
   }
 
-  void stop() {
-    spectre_gif_plz_stop = 1;
+  bool stop() {
+    stop_requested = true;
+    for (int i = 0; i < 500 && active; i++)
+      vTaskDelay(1 / portTICK_PERIOD_MS);
+    return !active;
   }
 
   bool isPlaying(const char* fp) {
-    Serial.printf("Remove %s %s ?\n", current_gif_file.path(), fp);
-    return current_gif_file && strcmp(current_gif_file.path(), fp) == 0;
+    // path() is NULL when no GIF is open (e.g. a Lua script is playing)
+    return gif && current_gif_file && strcmp(current_gif_file.path(), fp) == 0;
   }
 
 }
