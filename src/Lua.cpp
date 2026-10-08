@@ -7,6 +7,7 @@
 extern MatrixPanel_I2S_DMA *display;
 #include "Arena.hpp"
 #include "Protocol.hpp"
+#include "Log.hpp"
 extern void flip_matrix();
 extern VirtualMatrixPanel *virtualDisp;
 
@@ -15,7 +16,11 @@ extern int spectre_lua_plz_stop;
 namespace {
 
   static TaskHandle_t runLuaTaskHandle = NULL;
-  std::atomic<String*> current_lua_script(nullptr);
+  struct Script {
+    String source;
+    String name;  // for error messages
+  };
+  std::atomic<Script*> current_lua_script(nullptr);
   std::atomic<bool> lua_running(false);  // the task may be using the arena
 
   // Lua allocator on a private heap laid over the shared arena
@@ -160,7 +165,7 @@ namespace {
     display->clearScreen();
     display->flipDMABuffer();
 
-    String* str = current_lua_script.exchange(nullptr, std::memory_order_acq_rel);
+    Script* str = current_lua_script.exchange(nullptr, std::memory_order_acq_rel);
     if (str == nullptr)  // stopped before it started
       return;
 
@@ -168,7 +173,7 @@ namespace {
     multi_heap_handle_t heap = multi_heap_register(Arena::data(), Arena::SIZE);
     if (!heap) {
       delete str;
-      protocol_log(LogLevel::Error, "lua: no memory");
+      Log.line(LogLevel::Error, "lua: no memory");
       return;
     }
     LuaWrapper lua(arena_alloc, heap);
@@ -191,9 +196,8 @@ namespace {
     lua.Lua_register("printBLE",       (const lua_CFunction) &lua_wrapper_printBLE);
     lua.Lua_register("getMatrix",      (const lua_CFunction) &lua_wrapper_getMatrix);
     
-    Serial.println("Start task runLuaTask");
     spectre_lua_plz_stop = 0;
-    String ret = lua.Lua_dostring(str);
+    String ret = lua.Lua_dostring(&str->source, str->name.c_str());
     delete str;
     if (ret.indexOf("lua plz stop") > -1) {
       // this is not a real error but just a termination request.
@@ -201,8 +205,7 @@ namespace {
       return;
     }
     if (ret.length() > 0) {
-      Serial.println(ret);
-      protocol_log(LogLevel::Error, ret.c_str());
+      Log.line(LogLevel::Error, ret.c_str());
     }
   }
 
@@ -224,6 +227,7 @@ namespace {
 namespace Lua {
 
   BaseType_t init() {
+    LuaWrapper::out = &Log;  // Lua print() and the wrapper's messages: serial text + sys.log
     BaseType_t ret = xTaskCreatePinnedToCore(
       runLuaTask,   /* Task function. */
       "LuaTask", /* String with name of task. */
@@ -233,12 +237,12 @@ namespace Lua {
       &runLuaTaskHandle,	   /* Task handle. */
       1
     );
-    Serial.printf("xTaskCreatePinnedToCore returned %d\n", ret);
+    Log.printf("xTaskCreatePinnedToCore returned %d\n", ret);
     return ret;
   }
 
   bool stop() {
-    String* pending = current_lua_script.exchange(nullptr, std::memory_order_acq_rel);
+    Script* pending = current_lua_script.exchange(nullptr, std::memory_order_acq_rel);
     delete pending;
     spectre_lua_plz_stop = 1;
     for (int i = 0; i < 2000 && lua_running; i++)
@@ -246,7 +250,7 @@ namespace Lua {
     return !lua_running;
   }
 
-  void run_script(String script) {
+  void run_script(String script, String name) {
     if (runLuaTaskHandle == NULL) {
       // could not create task for lua scripts
       // aborting
@@ -255,7 +259,7 @@ namespace Lua {
     // stop current script
     spectre_lua_plz_stop = 1;
     // copy script string
-    String* str = new String(script.c_str());
+    Script* str = new Script{script, name};
     str = current_lua_script.exchange(str, std::memory_order_acq_rel);
     if (str != nullptr) {
       delete str;

@@ -1,5 +1,7 @@
 #include "LuaWrapper.h"
 
+Print *LuaWrapper::out = &Serial;
+
 extern "C" {
   static int lua_wrapper_print (lua_State *L) {
     int n = lua_gettop(L);  /* number of arguments */
@@ -14,11 +16,11 @@ extern "C" {
       s = lua_tolstring(L, -1, &l);  /* get result */
       if (s == NULL)
         return luaL_error(L, "'tostring' must return a string to 'print'");
-      if (i>1) Serial.write("\t");
-      Serial.write(s);
+      if (i>1) LuaWrapper::out->write("\t");
+      LuaWrapper::out->write(s);
       lua_pop(L, 1);  /* pop result */
     }
-    Serial.println();
+    LuaWrapper::out->println();
     return 0;
   }
 } 
@@ -39,20 +41,28 @@ void LuaWrapper::openLibs() {
   luaopen_string(_state);
   luaopen_math(_state);
   lua_register(_state, "print", lua_wrapper_print);
-  Serial.printf("I'm lua and i'am born!\n");
+  // Arduino constants as globals (not prepended to the script: error line
+  // numbers stay right)
+  const struct { const char *name; int value; } constants[] = {
+    {"INPUT", INPUT}, {"OUTPUT", OUTPUT}, {"LOW", LOW}, {"HIGH", HIGH},
+  };
+  for (const auto &c : constants) {
+    lua_pushinteger(_state, c.value);
+    lua_setglobal(_state, c.name);
+  }
 }
 
 LuaWrapper::~LuaWrapper() {
-  Serial.printf("I'm lua and i'am killing myself !\n");
   lua_close(_state);
 }
 
 
-String LuaWrapper::Lua_dostring(const String *script) {
-  String scriptWithConstants = addConstants() + *script;
+String LuaWrapper::Lua_dostring(const String *script, const char *name) {
   String result;
-  if (luaL_dostring(_state, scriptWithConstants.c_str())) {
-    result += "# lua error:\n" + String(lua_tostring(_state, -1));
+  String chunk = String("=") + name;  // "=": the name as is in messages
+  if (luaL_loadbuffer(_state, script->c_str(), script->length(), chunk.c_str()) ||
+      lua_pcall(_state, 0, LUA_MULTRET, 0)) {
+    result = "lua error: " + String(lua_tostring(_state, -1));
     lua_pop(_state, 1);
   }
   return result;
@@ -60,12 +70,4 @@ String LuaWrapper::Lua_dostring(const String *script) {
 
 void LuaWrapper::Lua_register(const String name, const lua_CFunction function) {
   lua_register(_state, name.c_str(), function);
-}
-
-String LuaWrapper::addConstants() {
-  String constants = "INPUT = " + String(INPUT) + "\r\n";
-  constants += "OUTPUT = " + String(OUTPUT) + "\r\n";
-  constants += "LOW = " + String(LOW) + "\r\n";
-  constants += "HIGH = " + String(HIGH) + "\r\n";
-  return constants;
 }

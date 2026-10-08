@@ -16,15 +16,14 @@ Preferences preferences;
 #endif
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <NimBLEDevice.h>
-#include "BLEOTA.h"
 #include "Arena.hpp"
 #include "Gif.hpp"
 #include "Lua.hpp"
 #include "Protocol.hpp"
+#include "Log.hpp"
 
-// Advertised so clients can spot Spectre devices (spectre_protocol PROTOCOL.md §1.1)
+// Advertised so clients can spot Spectre devices (spectre_protocol PROTOCOL.md §2.1)
 #define ADV_UUID_SPECTRE "4242"
-#define OTA_SERVICE_UUID "8018"
 
 #define DEFAULT_HOSTNAME	HOSTNAME
 #define AP_SSID				HOSTNAME
@@ -54,7 +53,7 @@ void flip_matrix() {
 
 void set_brightness(int b) {
 	brightness = constrain(b, 0, 250);
-	Serial.printf("Brightness set to %d\n", brightness);
+	Log.printf("Brightness set to %d\n", brightness);
 	display->setBrightness8(brightness); //0-255
 }
 
@@ -89,7 +88,7 @@ void print_progress(const char *str, uint32_t offset, uint32_t total_size) {
 }
 
 void print_message(const char *str) {
-	Serial.printf("print_message: %s", str);
+	Log.printf("print_message: %s", str);
 	virtualDisp->clearScreen();
 	virtualDisp->setCursor(0, V_MATRIX_HEIGHT/2-16);
 	virtualDisp->setTextSize(1);
@@ -103,7 +102,7 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
 		// 7.5 ms interval + 251-byte packets: fastest BLE uploads (spectre_protocol bench)
 		pServer->updateConnParams(desc->conn_handle, 0x6, 0x6, 0, 100);
 		pServer->setDataLen(desc->conn_handle, 251);
-		Serial.printf("BLE connected\n");
+		Log.printf("BLE connected\n");
 	};
 
 	void onDisconnect(NimBLEServer* pServer) {
@@ -111,7 +110,7 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
 	}
 
 	void onMTUChange (uint16_t mtu, ble_gap_conn_desc *desc) {
-		Serial.printf("MTU change: %d\n", mtu);
+		Log.printf("MTU change: %d\n", mtu);
 	}
 };
 
@@ -125,20 +124,31 @@ void playAnimeTask(void* parameter) {
 		
 	}
 
-	// Serial.println("Ending task playAnimeTask");
+	// Log.println("Ending task playAnimeTask");
 	// vTaskDelete(NULL);
 }
 
-void setup() {
-	Serial.begin(115200);
+// Build with -DHEAP_TRACE to log the heap after each init step of setup().
+#ifdef HEAP_TRACE
+	#define HEAP_MARK(step)                                                                     \
+		Log.printf("[heap] %-28s free %6u  largest %6u\n", step, esp_get_free_heap_size(), \
+		           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT))
+#else
+	#define HEAP_MARK(step)
+#endif
 
-	Serial.println("\n------------------------------");
-	Serial.printf("  Hub75 LEDs driver\n");
-	Serial.printf("  Hostname: %s\n", hostname);
+void setup() {
+	Serial.setRxBufferSize(5120);  // Spectre Protocol over serial: holds an upload window
+	Serial.begin(115200);
+	HEAP_MARK("start (serial ready)");
+
+	Log.println("\n------------------------------");
+	Log.printf("  Hub75 LEDs driver\n");
+	Log.printf("  Hostname: %s\n", hostname);
 	int core = xPortGetCoreID();
-	Serial.print("  Main code running on core ");
-	Serial.println(core);
-	Serial.println("------------------------------");
+	Log.print("  Main code running on core ");
+	Log.println(core);
+	Log.println("------------------------------");
 
 	HUB75_I2S_CFG::i2s_pins _pins = {R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN};
 	
@@ -163,9 +173,11 @@ void setup() {
 	display = new MatrixPanel_I2S_DMA(mxconfig);
 
 	display->begin();  // setup display with pins as pre-defined in the library
+	HEAP_MARK("display DMA buffers");
 
 	// GIF / PNG / Lua memory, while the heap is still in one piece
 	bool arena_ok = Arena::init();
+	HEAP_MARK("player arena");
 
 	#ifdef IS_CROSS
 		int16_t map[3*3] = {
@@ -202,13 +214,17 @@ void setup() {
 	#ifdef USE_SD
 		// Initialize SD card
 		SPI.begin(SD_SCK, SD_MISO, SD_MOSI);
+		// 20 MHz SPI (5x faster listings, uploads, GIF reads); the library's
+		// default 4 MHz as a fallback for cards / wiring that can't do it
 		for (int i=0; i<20; i++) {
-			if (!filesystem.begin(SD_CS, SPI)) {
-				Serial.println("Card Mount Failed");
+			uint32_t freq = i < 3 ? 20000000 : 4000000;
+			if (!filesystem.begin(SD_CS, SPI, freq)) {
+				Log.println("Card Mount Failed");
 				print_message("Can't mnt\nSD Card!\n");
 				delay(10);
 			} else {
 				is_fs_mnt = 1;
+				Log.printf("SD card mounted at %u MHz\n", freq / 1000000);
 				break;
 			}
 		}
@@ -216,45 +232,38 @@ void setup() {
 
 	#ifdef USE_SPIFFS
 		if (!filesystem.begin(true)) {
-			Serial.println("An Error has occurred while mounting SPIFFS");
+			Log.println("An Error has occurred while mounting SPIFFS");
 			print_message("Can't mnt\nSPIFFS!");
 			// ESP.restart();
 		} else {
-			Serial.println("mounting SPIFFS OK");
+			Log.println("mounting SPIFFS OK");
 			is_fs_mnt = 1;
 		}
 	#endif
 
+	HEAP_MARK("SD card mounted");
 	String boot_anim;  // played once GIF / Lua tasks exist
+	preferences.begin("matrix", false);
 	if (is_fs_mnt) {
-		root = filesystem.open("/GIF");
-		preferences.begin("matrix", false);
-		char str[255];
-		if (preferences.getString("anim", str, 255)) {
-			File file = filesystem.open(str);
-			if (file.size() > 0) {
-				Serial.printf("Start previous anim %s, %s\n", str, file.path());
-				boot_anim = file.path();
-			} else {
-				print_message("Gif\nnot loaded");
-			}
-		} else {
-			File file = root.openNextFile();
-			if (file) {
-				root.close();
-				root = filesystem.open("/GIF");
+		board_begin();  // /matrix/<board>/{gif,png,lua}
+		root = filesystem.open(board_dir("gif"));
+		String saved = preferences.getString("anim", "");
+		if (saved.length() && filesystem.exists(saved)) {
+			Log.printf("Start previous anim %s\n", saved.c_str());
+			boot_anim = saved;
+		} else {  // nothing saved, or deleted since: the board's first GIF
+			File file = root ? root.openNextFile() : File();
+			while (file && file.isDirectory())
 				file = root.openNextFile();
-				if (file)
-					SpectreGif::play(file.path());
-				else
-					print_message("No gif\nfound");
-			} else {
+			if (file)
+				boot_anim = file.path();
+			else
 				print_message("No gif\nfound");
-			}
 		}
 	}
 
-	Serial.println("Start BLE");
+	HEAP_MARK("board, preferences");
+	Log.println("Start BLE");
 	// Create the BLE Device
 	NimBLEDevice::init(hostname);
 	NimBLEDevice::setPower(ESP_PWR_LVL_P9);
@@ -263,13 +272,14 @@ void setup() {
 	// NimBLEDevice::setSecurityAuth(/*BLE_SM_PAIR_AUTHREQ_BOND | BLE_SM_PAIR_AUTHREQ_MITM |*/ BLE_SM_PAIR_AUTHREQ_SC);
 
 	// Create the BLE Server
+	HEAP_MARK("NimBLE stack");
 	pServer = NimBLEDevice::createServer();
 	pServer->setCallbacks(new MyServerCallbacks());
 
-	BLEOTA.begin(pServer);
-	BLEOTA.init();
 
+	HEAP_MARK("BLE server");
 	protocol_begin(pServer);
+	HEAP_MARK("protocol (BLE+serial links)");
 
 	BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
 	// pAdvertising->setAppearance(0x7<<6); // glasses
@@ -278,29 +288,40 @@ void setup() {
 	uint8_t* mac = (uint8_t*)NimBLEDevice::getAddress().getNative();
 	char macStr[5];
 	snprintf(macStr, sizeof(macStr), "%02X%02X", mac[4], mac[5]);
-	Serial.printf("BLE MAC Address: %s\n", macStr);
+	Log.printf("BLE MAC Address: %s\n", macStr);
 	strcat(hostname, macStr);
 	pAdvertising->setName(hostname);
 	NimBLEDevice::setDeviceName(hostname);
 	
+	HEAP_MARK("advertising config");
 	SpectreGif::init();
+	HEAP_MARK("GIF task (16 KB stack)");
 	Lua::init();
-	Serial.println("::init() OK");
+	HEAP_MARK("Lua task (10 KB stack)");
+	Log.println("::init() OK");
 	if (boot_anim.length())
 		play_file(boot_anim.c_str());
 
 	// Start advertising
 	pAdvertising->addServiceUUID(ADV_UUID_SPECTRE);
-	pAdvertising->addServiceUUID(OTA_SERVICE_UUID);
 
 	pAdvertising->start();
-	Serial.println("Waiting a client connection to notify...");
+	HEAP_MARK("advertising: end of setup");
+	Log.println("Waiting a client connection to notify...");
 }
 
 void loop(void) {
-	//Serial.printf("loop %s \n", root.path());
+	//Log.printf("loop %s \n", root.path());
 	protocol_loop();
-	BLEOTA.process();
+#ifdef HEAP_TRACE
+	static uint32_t last_trace = 0;
+	if (millis() - last_trace > 5000) {  // stack still free in each task (high-water mark)
+		last_trace = millis();
+		Log.printf("[stack] free: loop %u, GifTask %u, LuaTask %u; heap free %u\n",
+		           uxTaskGetStackHighWaterMark(nullptr), uxTaskGetStackHighWaterMark(xTaskGetHandle("GifTask")),
+		           uxTaskGetStackHighWaterMark(xTaskGetHandle("LuaTask")), esp_get_free_heap_size());
+	}
+#endif
 	if (is_fs_mnt && !root) {
 		print_message("Can't find\nGif folder!\n");
 		vTaskDelay(1000 / portTICK_PERIOD_MS);

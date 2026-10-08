@@ -5,6 +5,7 @@
 #include <new>
 
 #include "Arena.hpp"
+#include "Log.hpp"
 
 #ifdef USE_SD
 #include "FS.h"
@@ -248,7 +249,7 @@ namespace {
         next_frame_ready = 0;
         HHH += 1;
       }
-          // Serial.printf("New frame\n");
+          // Log.printf("New frame\n");
 
       // copy front buffer into back buffer
       // virtualDisp->copyDMABuffer();

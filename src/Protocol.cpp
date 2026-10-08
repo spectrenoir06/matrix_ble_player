@@ -4,11 +4,15 @@
 #include <Preferences.h>
 #include <SpectreProtocol.h>
 #include <spectre/ble_nimble.h>
+#include <spectre/fs_arduino.h>
+#include <spectre/ota_esp32.h>
+#include <spectre/serial_link.h>
 
 #include "Gif.hpp"
 #include "Lua.hpp"
 #include "Png.hpp"
 #include "Protocol.hpp"
+#include "Log.hpp"
 
 #ifdef USE_SD
 	#include "SD.h"
@@ -19,7 +23,12 @@
 	#define filesystem SPIFFS
 #endif
 
-#define FIRMWARE_VERSION "1.0.0"
+#ifndef FIRMWARE_VERSION
+	#define FIRMWARE_VERSION "1.0.0"
+#endif
+#ifndef BOARD_NAME
+	#define BOARD_NAME "default"  // until set with matrix.board.set
+#endif
 
 using namespace spectre;
 
@@ -28,6 +37,7 @@ extern uint8_t brightness;
 extern void set_brightness(int b);
 extern void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w);
 extern void print_progress(const char *str, uint32_t offset, uint32_t total_size);
+extern void print_message(const char *str);
 
 namespace {
 
@@ -43,14 +53,47 @@ QueueHandle_t log_queue = nullptr;
 // the ESP32 BLE controller takes ~300 B per connection event (≈40 KB/s at
 // the 7.5 ms interval set in main.cpp), measured with python/examples/bench.py.
 NimBLELink ble(10240, 2048);
+// Same protocol on the USB serial port, shared with the debug output (each
+// frame is preceded by a 0x00, clients show the text as console). 1 KB frames:
+// a stream window (4 × 1 KB) fits the 5 KB rx buffer set in main.cpp.
+SerialLink serial(Serial, 1024, [](uint32_t baud) { Serial.updateBaudRate(baud); }, 115200);
 uint32_t reboot_at = 0;
 
-constexpr size_t PATH_MAX_LEN = 128;
+#ifdef USE_SD
+ArduinoFileSystem fs(SD, [] { return SD.totalBytes(); }, [] { return SD.usedBytes(); }, true, "/sd");
+#else  // SPIFFS: flat, no real directories
+ArduinoFileSystem fs(SPIFFS, [] { return uint64_t(SPIFFS.totalBytes()); }, [] { return uint64_t(SPIFFS.usedBytes()); }, false,
+                     "/spiffs");
+#endif
+FileModule files(node, fs);
+OtaModule ota(node);  // firmware updates over BLE or serial (replaces BLEOTA)
+
+// ── board: /matrix/<board>/{gif,png,lua} ─────────────────────────────────────
+
+char board[33] = BOARD_NAME;
+const char* const BOARD_SUBDIRS[] = {"gif", "png", "lua"};
+
+bool valid_board(const char* name) {
+	size_t n = strlen(name);
+	if (n == 0 || n > 32)
+		return false;
+	for (const char* c = name; *c; c++)
+		if (!islower(*c) && !isdigit(*c) && *c != '_' && *c != '-')
+			return false;
+	return true;
+}
+
+void board_make_dirs() {
+	filesystem.mkdir("/matrix");
+	filesystem.mkdir(board_dir());
+	for (const char* sub : BOARD_SUBDIRS)
+		filesystem.mkdir(board_dir(sub));
+}
 
 // Reads a str argument as an absolute path that stays inside the filesystem.
 bool read_path(Request& req, char* path) {
-	req.args.str(path, PATH_MAX_LEN);
-	return req.args.ok() && path[0] == '/' && !strstr(path, "..");
+	req.args.str(path, FileModule::PATH_MAX_LEN);
+	return req.args.ok() && FileModule::validPath(path);
 }
 
 bool has_ext(const char* path, const char* ext) {
@@ -64,58 +107,6 @@ bool stop_all() {
 	bool gif = SpectreGif::stop();
 	return lua && gif;
 }
-
-// Upload target: written to <path>.part, renamed over <path> when complete.
-class FileSink : public StreamSink {
-public:
-	FileSink(const char* path, uint32_t size) : size_(size), start_(millis()) {
-		snprintf(path_, sizeof(path_), "%s", path);
-		snprintf(part_, sizeof(part_), "%s.part", path);
-		file_ = filesystem.open(part_, FILE_WRITE, true);  // creates missing dirs
-	}
-
-	bool ok() { return (bool)file_; }
-
-	bool write(const uint8_t* data, size_t len) override {
-		if (file_.write(data, len) != len)
-			return false;
-		written_ += len;
-		uint32_t now = millis();
-		if (now - shown_ >= 250 || written_ == size_) {  // progress bar on the matrix
-			shown_ = now;
-			print_progress("upload", written_, size_);
-		}
-		return true;
-	}
-
-	uint16_t close(bool complete) override {
-		file_.close();
-		uint32_t ms = millis() - start_;
-		NimBLEConnInfo c = ble.connInfo();
-		Serial.printf("upload %s: %u/%u B in %u ms (%u B/s), conn itvl %.2f ms, mtu %u, rx dropped %u B, frame errors %u\n",
-		              complete ? "ok" : "FAILED", written_, size_, ms, ms ? written_ * 1000 / ms : 0,
-		              c.getConnInterval() * 1.25f, c.getMTU(), ble.dropped(), ble.errors());
-		if (!complete) {
-			filesystem.remove(part_);
-			return 0;
-		}
-		if (filesystem.exists(path_)) {
-			if (SpectreGif::isPlaying(path_))
-				SpectreGif::stop();
-			filesystem.remove(path_);
-		}
-		return filesystem.rename(part_, path_) ? 0 : error::Internal;
-	}
-
-private:
-	char path_[PATH_MAX_LEN];
-	char part_[PATH_MAX_LEN + 5];
-	File file_;
-	uint32_t size_;
-	uint32_t start_;
-	uint32_t written_ = 0;
-	uint32_t shown_ = 0;
-};
 
 // ── sys ──────────────────────────────────────────────────────────────────────
 
@@ -161,81 +152,26 @@ void clear(Request& req) {
 	set_all_pixel(0, 0, 0, 0);
 }
 
-// ── file ─────────────────────────────────────────────────────────────────────
-
-void file_list(Request& req) {
-	char dir[PATH_MAX_LEN];
-	if (!read_path(req, dir))
-		return req.fail(error::BadArgs);
-	uint16_t offset = req.args.u16();
-	if (!req.args.ok())
-		return req.fail(error::BadArgs);
-
-	File root = filesystem.open(dir);
-	if (!root || !root.isDirectory())
-		return req.fail(error::NotFound);
-
-	// total, count, then as many entries from `offset` as fit
-	uint8_t page_buf[512];
-	Writer page(page_buf, sizeof(page_buf));
-	uint16_t total = 0;
-	uint8_t count = 0;
-	bool full = false;
-	size_t room = req.result.remaining() - 3;  // minus total u16 + count u8
-	for (File f = root.openNextFile(); f; f = root.openNextFile()) {
-		if (f.isDirectory())
-			continue;
-		if (total++ < offset || full)
-			continue;
-		const char* name = f.name();
-		const char* slash = strrchr(name, '/');  // some cores return the full path
-		if (slash)
-			name = slash + 1;
-		size_t entry = 1 + strlen(name) + 4;
-		if (page.size() + entry > room || count == 255) {
-			full = true;
-			continue;
-		}
-		page.str(name).u32(f.size());
-		count++;
-	}
-	req.result.u16(total).u8(count).raw(page.data(), page.size());
-}
-
-void file_delete(Request& req) {
-	char path[PATH_MAX_LEN];
-	if (!read_path(req, path))
-		return req.fail(error::BadArgs);
-	if (!filesystem.exists(path))
-		return req.fail(error::NotFound);
-	if (SpectreGif::isPlaying(path))
-		SpectreGif::stop();
-	if (!filesystem.remove(path))
-		req.fail(error::Internal);
-}
-
-void file_write(Request& req) {
-	char path[PATH_MAX_LEN];
-	if (!read_path(req, path))
-		return req.fail(error::BadArgs);
-	uint32_t size = req.args.u32();
-	if (!req.args.ok())
-		return req.fail(error::BadArgs);
-	stop_all();  // the display shows the upload progress
-	std::unique_ptr<FileSink> sink(new FileSink(path, size));
-	if (!sink->ok())
-		return req.fail(error::Internal, "cannot create file");
-	req.acceptStream(std::move(sink), size);
-}
-
 // ── matrix ───────────────────────────────────────────────────────────────────
 
 void matrix_info(Request& req) {
-	req.result.u16(MATRIX_WIDTH).u16(MATRIX_HEIGHT).u16(V_MATRIX_WIDTH).u16(V_MATRIX_HEIGHT);
+	req.result.u16(MATRIX_WIDTH).u16(MATRIX_HEIGHT).u16(V_MATRIX_WIDTH).u16(V_MATRIX_HEIGHT).str(board);
+}
+
+void matrix_board_set(Request& req) {
+	char name[33];
+	req.args.str(name, sizeof(name));
+	if (!req.args.ok() || !valid_board(name))
+		return req.fail(error::BadArgs, "board: 1-32 of a-z 0-9 _ -");
+	strcpy(board, name);
+	preferences.putString("board", board);
+	preferences.remove("anim");  // the saved file belongs to the previous board
+	board_make_dirs();
+	Log.printf("board: %s\n", board);
 }
 
 void matrix_play(Request& req) {
-	char path[PATH_MAX_LEN];
+	char path[FileModule::PATH_MAX_LEN];
 	if (!read_path(req, path))
 		return req.fail(error::BadArgs);
 	if (uint16_t err = play_file(path))
@@ -249,6 +185,21 @@ void matrix_stop(Request& req) {
 }
 
 }  // namespace
+
+void board_begin() {
+	String saved = preferences.getString("board", BOARD_NAME);
+	if (valid_board(saved.c_str()))
+		strcpy(board, saved.c_str());
+	board_make_dirs();
+	Log.printf("board: %s (%s)\n", board, board_dir().c_str());
+}
+
+String board_dir(const char* sub) {
+	String dir = String("/matrix/") + board;
+	if (sub)
+		dir += String("/") + sub;
+	return dir;
+}
 
 uint16_t play_file(const char* path) {
 	bool gif = has_ext(path, ".gif"), png = has_ext(path, ".png"), lua = has_ext(path, ".lua");
@@ -269,15 +220,15 @@ uint16_t play_file(const char* path) {
 		File f = filesystem.open(path);
 		String script = f.readString();
 		f.close();
-		Lua::run_script(script);
+		const char* slash = strrchr(path, '/');
+		Lua::run_script(script, slash ? slash + 1 : path);
 	}
-	Serial.printf("play %s\n", path);
+	Log.printf("play %s\n", path);
 	return 0;
 }
 
 void protocol_begin(NimBLEServer* server) {
 	node.streamWindow = 4;
-	node.addModule("file");
 	node.addModule("light");
 	node.addModule("matrix");
 
@@ -287,16 +238,67 @@ void protocol_begin(NimBLEServer* server) {
 	node.on(method::LightBrightnessStep, brightness_step);
 	node.on(method::LightFill, fill);
 	node.on(method::LightClear, clear);
-	node.on(method::FileList, file_list);
-	node.on(method::FileDelete, file_delete);
-	node.on(method::FileWrite, file_write);
+	// file.* comes from spectre::FileModule; the matrix only reacts to it
+	files.onModify = [](const char* path) {
+		if (SpectreGif::isPlaying(path))  // its file is about to change
+			SpectreGif::stop();
+	};
+	static uint32_t upload_start = 0, progress_shown = 0, upload_size = 0;
+	files.onUploadStart = [](const char*, uint32_t size) {
+		stop_all();  // the display shows the upload progress
+		upload_size = size;
+		upload_start = millis();
+		progress_shown = 0;
+	};
+	files.onUploadProgress = [](uint32_t done, uint32_t total) {
+		uint32_t now = millis();
+		if (now - progress_shown >= 250 || done == total) {
+			progress_shown = now;
+			print_progress("upload", done, total);
+		}
+	};
+	// firmware update: same progress bar, then a reboot into the new firmware
+	ota.onStart = [](uint32_t size) {
+		stop_all();
+		upload_start = millis();
+		progress_shown = 0;
+		Log.printf("firmware update: %u B\n", size);
+	};
+	ota.onProgress = [](uint32_t done, uint32_t total) {
+		uint32_t now = millis();
+		if (now - progress_shown >= 250 || done == total) {
+			progress_shown = now;
+			print_progress("update", done, total);
+		}
+	};
+	ota.onEnd = [](bool ok, const char* err) {
+		if (ok) {
+			Log.printf("firmware update ok in %u ms, rebooting\n", millis() - upload_start);
+			print_message("Update OK\nrebooting");
+		} else {
+			Log.line(LogLevel::Error, (String("firmware update failed: ") + err).c_str());
+			print_message("Update\nfailed");
+		}
+	};
+
+	files.onUploadEnd = [](const char* path, bool ok) {
+		uint32_t ms = millis() - upload_start;
+		Log.printf("upload %s %s: %u B in %u ms (%u B/s)\n", path, ok ? "ok" : "FAILED", upload_size, ms,
+		              ms ? upload_size * 1000 / ms : 0);
+	};
 	node.on(method::MatrixInfo, matrix_info);
+	node.on(method::MatrixBoardSet, matrix_board_set);
 	node.on(method::MatrixPlay, matrix_play);
 	node.on(method::MatrixStop, matrix_stop);
 
-	log_queue = xQueueCreate(8, sizeof(LogEntry));
+	log_queue = xQueueCreate(16, sizeof(LogEntry));
 	ble.begin(server);
 	node.attach(ble);
+	node.attach(serial);
+}
+
+bool protocol_serial_active() {
+	return serial.active();
 }
 
 void protocol_log(LogLevel level, const char* text) {
@@ -310,7 +312,9 @@ void protocol_log(LogLevel level, const char* text) {
 
 void protocol_loop() {
 	ble.poll();
+	serial.poll();
 	node.tick(millis());
+	ota.loop();
 	LogEntry e;
 	while (xQueueReceive(log_queue, &e, 0) == pdTRUE) {
 		uint8_t buf[2 + sizeof(e.text)];

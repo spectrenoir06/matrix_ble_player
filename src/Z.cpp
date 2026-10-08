@@ -1,5 +1,6 @@
 #include <Mapping.h>
 #include <atomic>
+#include "Log.hpp"
 
 #ifdef USE_SD
 #include "FS.h"
@@ -51,7 +52,7 @@ namespace {
             if (wait > 2000)
               wait = 100;
 
-            Serial.printf("  FPS: %02d; nb: %04d format: %d\n", fps, nb, head[0]);
+            Log.printf("  FPS: %02d; nb: %04d format: %d\n", fps, nb, head[0]);
             spectre_z_plz_stop = 0;
             next_frame_millis = 0;
             // clear both buffers

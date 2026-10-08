@@ -8,6 +8,7 @@
 
 #include "Arena.hpp"
 #include "Png.hpp"
+#include "Log.hpp"
 
 #ifdef USE_SD
 	#include "SD.h"
@@ -74,14 +75,14 @@ namespace SpectrePng {
     PNG *png = new (Arena::data()) PNG();
     uint16_t err = spectre::error::BadArgs;  // not a PNG we can decode
     if (png->open(path, PNGOpenFile, PNGCloseFile, PNGReadFile, PNGSeekFile, PNGDraw) != PNG_SUCCESS) {
-      Serial.printf("PNG: cannot open %s (error %d)\n", path, png->getLastError());
+      Log.printf("PNG: cannot open %s (error %d)\n", path, png->getLastError());
     } else if (png->getWidth() > MAX_WIDTH) {
-      Serial.printf("PNG: %s is wider than %d px\n", path, MAX_WIDTH);
+      Log.printf("PNG: %s is wider than %d px\n", path, MAX_WIDTH);
       png->close();
     } else {
       off_x = (V_MATRIX_WIDTH  - png->getWidth())  / 2;
       off_y = (V_MATRIX_HEIGHT - png->getHeight()) / 2;
-      Serial.printf("PNG %s: %dx%d\n", path, png->getWidth(), png->getHeight());
+      Log.printf("PNG %s: %dx%d\n", path, png->getWidth(), png->getHeight());
       virtualDisp->clearScreen();
       if (png->decode(png, 0) == PNG_SUCCESS)
         err = 0;
