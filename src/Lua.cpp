@@ -15,7 +15,12 @@ extern int spectre_lua_plz_stop;
 
 namespace {
 
+  // The Lua task exists only while scripts run: created by run_script(), it
+  // deletes itself when there is nothing left to run (its 10 KB stack is
+  // RAM WiFi needs). The lock: a script queued while it is exiting is not lost.
   static TaskHandle_t runLuaTaskHandle = NULL;
+  static portMUX_TYPE lua_task_lock = portMUX_INITIALIZER_UNLOCKED;
+  constexpr uint32_t LUA_STACK = 1024 * 10;
   struct Script {
     String source;
     String name;  // for error messages
@@ -210,7 +215,6 @@ namespace {
   }
 
   void runLuaTask(void* parameter) {
-    // Infinite loop :-)
     for(;;) {
       // Mark busy *before* looking for a script, so stop() can't miss us.
       lua_running = true;
@@ -218,6 +222,14 @@ namespace {
         lua_exec();
       }
       lua_running = false;
+      bool done;
+      portENTER_CRITICAL(&lua_task_lock);
+      done = current_lua_script.load() == nullptr;
+      if (done)
+        runLuaTaskHandle = NULL;
+      portEXIT_CRITICAL(&lua_task_lock);
+      if (done)
+        vTaskDelete(NULL);  // frees the stack
       vTaskDelay(1 / portTICK_PERIOD_MS);
     };
   }
@@ -228,17 +240,7 @@ namespace Lua {
 
   BaseType_t init() {
     LuaWrapper::out = &Log;  // Lua print() and the wrapper's messages: serial text + sys.log
-    BaseType_t ret = xTaskCreatePinnedToCore(
-      runLuaTask,   /* Task function. */
-      "LuaTask", /* String with name of task. */
-      1024 * 10,  /* Stack size in bytes. */
-      NULL,	   /* Parameter passed as input of the task */
-      1,		   /* Priority of the task. */
-      &runLuaTaskHandle,	   /* Task handle. */
-      1
-    );
-    Log.printf("xTaskCreatePinnedToCore returned %d\n", ret);
-    return ret;
+    return pdPASS;  // the task is created by run_script()
   }
 
   bool stop() {
@@ -251,11 +253,6 @@ namespace Lua {
   }
 
   void run_script(String script, String name) {
-    if (runLuaTaskHandle == NULL) {
-      // could not create task for lua scripts
-      // aborting
-      return;
-    }
     // stop current script
     spectre_lua_plz_stop = 1;
     // copy script string
@@ -263,6 +260,17 @@ namespace Lua {
     str = current_lua_script.exchange(str, std::memory_order_acq_rel);
     if (str != nullptr) {
       delete str;
+    }
+    // no task: start one (a running task picks the script up)
+    portENTER_CRITICAL(&lua_task_lock);
+    bool create = runLuaTaskHandle == NULL;
+    if (create)
+      runLuaTaskHandle = reinterpret_cast<TaskHandle_t>(1);  // being created
+    portEXIT_CRITICAL(&lua_task_lock);
+    if (create && xTaskCreatePinnedToCore(runLuaTask, "LuaTask", LUA_STACK, NULL, 1, &runLuaTaskHandle, 1) != pdPASS) {
+      runLuaTaskHandle = NULL;
+      delete current_lua_script.exchange(nullptr, std::memory_order_acq_rel);
+      Log.line(LogLevel::Error, "lua: not enough memory to start");
     }
   }
 

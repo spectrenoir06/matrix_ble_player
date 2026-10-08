@@ -60,7 +60,7 @@ public:
     void drawPixelRGB888(int16_t x, int16_t y, uint8_t r, uint8_t g, uint8_t b);
 
 #ifdef USE_GFX_ROOT
-    // 24bpp FASTLED CRGB colour struct support
+    // 24bpp CRGB colour (GFX_Root's interface; CRGB from lib/CRGB)
     void fillScreen(CRGB color);
     void drawPixel(int16_t x, int16_t y, CRGB color);
     void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t r, uint8_t g, uint8_t b);
@@ -158,7 +158,6 @@ inline void VirtualMatrixPanel::drawPixelRGB888(int16_t x, int16_t y, uint8_t r,
 }
 
 #ifdef USE_GFX_ROOT
-// Support for CRGB values provided via FastLED
 inline void VirtualMatrixPanel::drawPixel(int16_t x, int16_t y, CRGB color)
 {
     this->getCoords(x, y);

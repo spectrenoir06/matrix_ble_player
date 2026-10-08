@@ -7,6 +7,11 @@
 #include <spectre/fs_arduino.h>
 #include <spectre/ota_esp32.h>
 #include <spectre/serial_link.h>
+#ifdef USE_WIFI
+	#include <esp_wifi.h>
+	#include <spectre/wifi_esp32.h>
+	#include <spectre/ws_async.h>
+#endif
 
 #include "Gif.hpp"
 #include "Lua.hpp"
@@ -67,6 +72,45 @@ ArduinoFileSystem fs(SPIFFS, [] { return uint64_t(SPIFFS.totalBytes()); }, [] { 
 #endif
 FileModule files(node, fs);
 OtaModule ota(node);  // firmware updates over BLE or serial (replaces BLEOTA)
+
+bool ble_on = false;
+
+}  // namespace
+
+#ifdef USE_WIFI
+// WiFi buffers: Arduino lets WiFi take up to 32 RX + 32 TX buffers of 1.6 KB
+// under heavy traffic (~100 KB): on this board the heap ran out and WiFi got
+// stuck. Fewer of them (linked with -Wl,--wrap=esp_wifi_init): a bit slower,
+// never more than ~30 KB.
+extern "C" esp_err_t __real_esp_wifi_init(const wifi_init_config_t* config);
+extern "C" esp_err_t __wrap_esp_wifi_init(const wifi_init_config_t* config) {
+	wifi_init_config_t cfg = *config;
+	cfg.dynamic_rx_buf_num = 10;
+	cfg.dynamic_tx_buf_num = 8;
+	cfg.rx_ba_win = 6 < cfg.dynamic_rx_buf_num ? 6 : cfg.dynamic_rx_buf_num;
+	return __real_esp_wifi_init(&cfg);
+}
+#endif
+
+namespace {
+
+#ifdef USE_WIFI
+// WiFi (network set with wifi.set, saved): the app from the SD card on
+// http://<board>.local/ and the protocol on ws://<board>.local/ws.
+// RAM is too short for WiFi next to BLE (no PSRAM): the board runs either
+// - BLE mode: no network saved; wifi.set saves one and reboots into WiFi;
+// - WiFi mode: a network saved; BLE off. Not connected 20 s after boot:
+//   reboots into BLE mode for that boot only (fix the network over BLE).
+// wifi.set "" (forget the network) reboots into BLE mode.
+WifiModule wifi(node, "spectre-matrix");
+constexpr uint32_t WIFI_JOIN_MS = 20000;
+constexpr uint32_t SKIP_WIFI = 0x57494649;  // "WIFI"
+RTC_NOINIT_ATTR uint32_t skip_wifi;  // survives ESP.restart(), not a power cycle
+AsyncWebServer http(80);
+// 1 KB packets: ≈ 7 KB of buffers (allocated once WiFi is up). 2 KB ones go
+// ~60% faster but cost 7 KB more, and RAM is what keeps WiFi stable here.
+AsyncWsLink ws("/ws", 1024, 4 * 1028);
+#endif
 
 // ── board: /matrix/<board>/{gif,png,lua} ─────────────────────────────────────
 
@@ -250,6 +294,9 @@ void protocol_begin(NimBLEServer* server) {
 		upload_start = millis();
 		progress_shown = 0;
 	};
+	files.onUploadError = [](const char* path, uint32_t offset) {
+		Log.printf("upload: SD card write failed in %s at byte %u (bad card / filesystem?)\n", path, offset);
+	};
 	files.onUploadProgress = [](uint32_t done, uint32_t total) {
 		uint32_t now = millis();
 		if (now - progress_shown >= 250 || done == total) {
@@ -291,10 +338,66 @@ void protocol_begin(NimBLEServer* server) {
 	node.on(method::MatrixPlay, matrix_play);
 	node.on(method::MatrixStop, matrix_stop);
 
-	log_queue = xQueueCreate(16, sizeof(LogEntry));
-	ble.begin(server);
-	node.attach(ble);
+	log_queue = xQueueCreate(8, sizeof(LogEntry));
+	if (server) {
+		ble.begin(server);
+		node.attach(ble);
+		ble_on = true;
+	}
 	node.attach(serial);
+#ifdef USE_WIFI
+	String host = board;  // banana → banana.local
+	host.replace('_', '-');
+	wifi.setHostname(host);
+	node.attach(ws);
+	wifi.onState = [](WifiModule::State s) {
+		const char* names[] = {"off", "connecting", "connected", "failed"};
+		if (s == WifiModule::Connected)
+			Log.printf("wifi: connected to %s, http://%s.local (%s)\n", wifi.ssid().c_str(), wifi.hostname().c_str(),
+			           wifi.ip().c_str());
+		else
+			Log.printf("wifi: %s\n", names[s]);
+	};
+	wifi.onConnected = [] {  // servers and their buffers only once WiFi is up
+		ws.begin(http);
+		// the web app, copied to /www on the SD card: one gzipped index.html
+		// (spectre-bt-app scripts/push-to-matrix.sh). A request needs a few KB:
+		// refused (503) rather than started when RAM is short.
+		http.serveStatic("/", filesystem, "/www/").setDefaultFile("index.html").setFilter([](AsyncWebServerRequest*) {
+			return heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) > 10 * 1024;
+		});
+		http.onNotFound([](AsyncWebServerRequest* r) {
+			if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) <= 10 * 1024)
+				r->send(503, "text/plain", "busy, try again");
+			else
+				r->send(404, "text/plain", "not found");
+		});
+		http.begin();
+	};
+	wifi.onSaved = [] {  // the other mode, or the new network: from a clean boot
+		Log.printf("wifi: %s, rebooting\n", wifi.ssid().length() ? "network saved" : "off");
+		reboot_at = millis() + 500;
+	};
+	wifi.radio = protocol_wifi_mode();
+	wifi.powerSave = false;  // WiFi mode = BLE off: full speed
+	wifi.begin();
+#endif
+}
+
+bool protocol_wifi_mode() {
+#ifdef USE_WIFI
+	static int mode = -1;
+	if (mode < 0) {
+		bool skip = skip_wifi == SKIP_WIFI;
+		skip_wifi = 0;  // the next reboot tries WiFi again
+		mode = WifiModule::saved() && !skip;
+		if (skip)
+			Log.println("wifi: could not join the network, BLE mode for this boot");
+	}
+	return mode == 1;
+#else
+	return false;
+#endif
 }
 
 bool protocol_serial_active() {
@@ -311,8 +414,33 @@ void protocol_log(LogLevel level, const char* text) {
 }
 
 void protocol_loop() {
-	ble.poll();
+	if (ble_on)
+		ble.poll();
 	serial.poll();
+#ifdef USE_WIFI
+	ws.poll();
+	wifi.loop();
+	static bool joined = false;
+	joined |= wifi.state() == WifiModule::Connected;
+	// Starved of RAM for long (heavy traffic gone wrong), WiFi can get stuck
+	// for good: reboot (back on WiFi) rather than stay unreachable.
+	static uint32_t starved_since = 0;
+	if (wifi.radio && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 6 * 1024) {
+		if (!starved_since)
+			starved_since = millis() | 1;
+		else if (millis() - starved_since > 20000 && !reboot_at) {
+			Log.println("wifi: out of memory for 20 s, rebooting");
+			reboot_at = millis() + 200;
+		}
+	} else {
+		starved_since = 0;
+	}
+	if (wifi.radio && !joined && millis() > WIFI_JOIN_MS && !reboot_at) {
+		Log.println("wifi: not connected after 20 s, rebooting into BLE mode");
+		skip_wifi = SKIP_WIFI;
+		reboot_at = millis() + 200;
+	}
+#endif
 	node.tick(millis());
 	ota.loop();
 	LogEntry e;

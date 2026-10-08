@@ -1,0 +1,9 @@
+# SD-card boards with WiFi: two 1.875 MB app slots (OTA), a small SPIFFS
+# (files live on the SD card). Same nvs / otadata offsets as Banane.csv:
+# settings survive the switch (flash it once over serial, with boot_app0).
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,      data, nvs,     0x9000,  0x5000,
+otadata,  data, ota,     0xe000,  0x2000,
+app0,     app,  ota_0,   0x10000, 0x1E0000,
+app1,     app,  ota_1,   0x1F0000, 0x1E0000,
+spiffs,   data, spiffs,  0x3D0000, 0x30000,

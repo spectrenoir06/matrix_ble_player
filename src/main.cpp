@@ -16,6 +16,7 @@ Preferences preferences;
 #endif
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <NimBLEDevice.h>
+#include <esp_bt.h>
 #include "Arena.hpp"
 #include "Gif.hpp"
 #include "Lua.hpp"
@@ -66,6 +67,8 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 
 uint16_t hue = 0;
 
+extern void hsv2rgb(uint16_t h, uint8_t s, uint8_t v, uint8_t *r, uint8_t *g, uint8_t *b);  // Gif.cpp, h 0-359
+
 void print_progress(const char *str, uint32_t offset, uint32_t total_size) {
 	virtualDisp->clearScreen();
 	virtualDisp->setCursor(4, V_MATRIX_HEIGHT / 2 - 14);
@@ -73,16 +76,16 @@ void print_progress(const char *str, uint32_t offset, uint32_t total_size) {
 	virtualDisp->setTextColor(display->color565(255,255,255));
 	virtualDisp->printf(str);
 	virtualDisp->fillRect(4, V_MATRIX_HEIGHT/2, V_MATRIX_WIDTH - 4 * 2, 8, 255, 255, 255);
-	CRGB rgb;
-	hsv2rgb_spectrum(CHSV(hue+=10, 255, 255), rgb);
+	uint8_t r, g, b;
+	hsv2rgb(hue += 14, 255, 255, &r, &g, &b);  // a rainbow, one step per update
 	virtualDisp->fillRect(
 		4+1,
 		(V_MATRIX_HEIGHT/2)+1,
 		map(offset, 0, total_size, 0, ((V_MATRIX_WIDTH) - 4 * 2 - 2)),
 		8 - 2,
-		rgb.r,
-		rgb.g,
-		rgb.b
+		r,
+		g,
+		b
 	);
 	flip_matrix();
 }
@@ -218,7 +221,8 @@ void setup() {
 		// default 4 MHz as a fallback for cards / wiring that can't do it
 		for (int i=0; i<20; i++) {
 			uint32_t freq = i < 3 ? 20000000 : 4000000;
-			if (!filesystem.begin(SD_CS, SPI, freq)) {
+			// 3 files open at most (default 5): each one reserves a 4 KB buffer
+			if (!filesystem.begin(SD_CS, SPI, freq, "/sd", 3)) {
 				Log.println("Card Mount Failed");
 				print_message("Can't mnt\nSD Card!\n");
 				delay(10);
@@ -263,6 +267,16 @@ void setup() {
 	}
 
 	HEAP_MARK("board, preferences");
+	BLEAdvertising *pAdvertising = nullptr;
+	if (protocol_wifi_mode()) {  // no RAM for both radios
+		Log.println("WiFi mode: BLE off");
+		// the Bluetooth controller's memory, reserved at boot: to the heap
+		// (until the next reboot)
+		esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
+		HEAP_MARK("Bluetooth memory released");
+		protocol_begin(nullptr);
+		HEAP_MARK("protocol (serial + WiFi links)");
+	} else {
 	Log.println("Start BLE");
 	// Create the BLE Device
 	NimBLEDevice::init(hostname);
@@ -281,7 +295,7 @@ void setup() {
 	protocol_begin(pServer);
 	HEAP_MARK("protocol (BLE+serial links)");
 
-	BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+	pAdvertising = BLEDevice::getAdvertising();
 	// pAdvertising->setAppearance(0x7<<6); // glasses
 	pAdvertising->setAppearance(0x01F << 6 | 0x06); // LEDs 
 
@@ -292,20 +306,22 @@ void setup() {
 	strcat(hostname, macStr);
 	pAdvertising->setName(hostname);
 	NimBLEDevice::setDeviceName(hostname);
+	}
 	
 	HEAP_MARK("advertising config");
 	SpectreGif::init();
-	HEAP_MARK("GIF task (16 KB stack)");
+	HEAP_MARK("GIF task (6 KB stack)");
 	Lua::init();
-	HEAP_MARK("Lua task (10 KB stack)");
+	HEAP_MARK("Lua (task created on demand)");
 	Log.println("::init() OK");
 	if (boot_anim.length())
 		play_file(boot_anim.c_str());
 
 	// Start advertising
-	pAdvertising->addServiceUUID(ADV_UUID_SPECTRE);
-
-	pAdvertising->start();
+	if (pAdvertising) {
+		pAdvertising->addServiceUUID(ADV_UUID_SPECTRE);
+		pAdvertising->start();
+	}
 	HEAP_MARK("advertising: end of setup");
 	Log.println("Waiting a client connection to notify...");
 }
@@ -317,9 +333,11 @@ void loop(void) {
 	static uint32_t last_trace = 0;
 	if (millis() - last_trace > 5000) {  // stack still free in each task (high-water mark)
 		last_trace = millis();
-		Log.printf("[stack] free: loop %u, GifTask %u, LuaTask %u; heap free %u\n",
+		Log.printf("[stack] free: loop %u, GifTask %u, LuaTask %u; heap free %u (lowest %u)\n",
 		           uxTaskGetStackHighWaterMark(nullptr), uxTaskGetStackHighWaterMark(xTaskGetHandle("GifTask")),
-		           uxTaskGetStackHighWaterMark(xTaskGetHandle("LuaTask")), esp_get_free_heap_size());
+		           xTaskGetHandle("LuaTask") ? uxTaskGetStackHighWaterMark(xTaskGetHandle("LuaTask")) : 0,
+		           esp_get_free_heap_size(),
+		           esp_get_minimum_free_heap_size());
 	}
 #endif
 	if (is_fs_mnt && !root) {

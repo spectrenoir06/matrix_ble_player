@@ -89,12 +89,13 @@ void hsv2rgb(const uint16_t src_h, const uint8_t src_s, const uint8_t src_v, uin
     *dst_b = (uint8_t)(b * 255); // dst_r : 0-255
 }
 
-void color_shift(CRGB *col, int32_t shift) {
+// rgb: 3 bytes, r g b
+void color_shift(uint8_t *rgb, int32_t shift) {
     uint8_t s,v;
     uint16_t h;
-    if ((col->r != col->g) || (col->g != col->b)) {
-      rgb2hsv(col->r, col->g, col->b, &h, &s, &v);
-      hsv2rgb(h + shift, s, v, &col->r, &col->g, &col->b);
+    if ((rgb[0] != rgb[1]) || (rgb[1] != rgb[2])) {
+      rgb2hsv(rgb[0], rgb[1], rgb[2], &h, &s, &v);
+      hsv2rgb(h + shift, s, v, &rgb[0], &rgb[1], &rgb[2]);
     }
 }
 
@@ -117,7 +118,7 @@ namespace {
   void GIFDraw(GIFDRAW *pDraw) {
     disposalMethod = pDraw->ucDisposalMethod;
     uint8_t *s;
-    CRGB *usPalette;
+    uint8_t *palette;  // RGB888: 3 bytes per color
     int y, iWidth;
 
     iWidth = pDraw->iWidth;
@@ -127,14 +128,14 @@ namespace {
     int off_x = (V_MATRIX_WIDTH  - gif->getCanvasWidth() )/2;
     int off_y = (V_MATRIX_HEIGHT - gif->getCanvasHeight())/2;
 
-    usPalette = (CRGB*)pDraw->pPalette24;
+    palette = pDraw->pPalette24;
     y = pDraw->iY + pDraw->y; // current line
     s = pDraw->pPixels;
     for (int x = 0; x < pDraw->iWidth; x++) {
       if (!pDraw->ucHasTransparency || *s != pDraw->ucTransparent) {
-          CRGB col = usPalette[*s];
-          // color_shift(&col, HHH + x*5 + y*5);
-          virtualDisp->drawPixel(off_x + x + pDraw->iX, off_y + y, col);
+          const uint8_t *col = palette + *s * 3;
+          // color_shift(col, HHH + x*5 + y*5);
+          virtualDisp->drawPixelRGB888(off_x + x + pDraw->iX, off_y + y, col[0], col[1], col[2]);
       }
       s++;
     }
@@ -273,7 +274,7 @@ namespace SpectreGif {
     return xTaskCreate(
         gifTask,   /* Task function. */
         "GifTask", /* String with name of task. */
-        8192 * 2,        /* Stack size in bytes. */
+        6144,            /* Stack size in bytes: ~2 KB used while playing (HEAP_TRACE) */
         NULL,            /* Parameter passed as input of the task */
         5,               /* Priority of the task. */
         &task);           /* Task handle. */
