@@ -5,6 +5,7 @@
 #include <Mapping.h>
 
 extern MatrixPanel_I2S_DMA *display;
+#include "Audio.hpp"
 #include "Layout.hpp"
 #include "Arena.hpp"
 #include "Protocol.hpp"
@@ -158,6 +159,33 @@ namespace {
     return 0;
   }
 
+  // Sound (Audio.hpp), like Shadertoy's: getFFT() a table of Audio::BINS
+  // levels 0..255 (low to high frequencies), getFFT(i) one of them (1-based);
+  // getWave() / getWave(i) the waveform, 128 = silence.
+  static int push_audio(lua_State *lua_state, void (*read)(uint8_t *)) {
+    uint8_t v[Audio::BINS];
+    read(v);
+    if (lua_gettop(lua_state) >= 1) {
+      lua_Integer i = luaL_checkinteger(lua_state, 1);
+      lua_pushinteger(lua_state, i >= 1 && i <= Audio::BINS ? v[i - 1] : 0);
+      return 1;
+    }
+    lua_createtable(lua_state, Audio::BINS, 0);
+    for (int i = 0; i < Audio::BINS; i++) {
+      lua_pushinteger(lua_state, v[i]);
+      lua_rawseti(lua_state, -2, i + 1);
+    }
+    return 1;
+  }
+
+  static int lua_wrapper_getFFT(lua_State *lua_state) {
+    return push_audio(lua_state, Audio::fft);
+  }
+
+  static int lua_wrapper_getWave(lua_State *lua_state) {
+    return push_audio(lua_state, Audio::wave);
+  }
+
   static int lua_wrapper_getMatrix(lua_State *lua_state) {
     lua_pushinteger(lua_state, (lua_Integer)matrix_w);
     lua_pushinteger(lua_state, (lua_Integer)matrix_h);
@@ -201,6 +229,8 @@ namespace {
     
     lua.Lua_register("printBLE",       (const lua_CFunction) &lua_wrapper_printBLE);
     lua.Lua_register("getMatrix",      (const lua_CFunction) &lua_wrapper_getMatrix);
+    lua.Lua_register("getFFT",         (const lua_CFunction) &lua_wrapper_getFFT);
+    lua.Lua_register("getWave",        (const lua_CFunction) &lua_wrapper_getWave);
     
     spectre_lua_plz_stop = 0;
     String ret = lua.Lua_dostring(&str->source, str->name.c_str());
