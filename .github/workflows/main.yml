@@ -1,79 +1,80 @@
-name: PlatformIO CI
+# Builds the firmware on every push; a v* tag also publishes it as a GitHub
+# Release. spectre-server picks up the latest release for the app's install
+# screen (spectre-bt-app: scripts/sync-firmware.sh).
+#
+# spectre_protocol is a private repo: read with a deploy key, secret
+# SPECTRE_PROTOCOL_KEY, at the commit in spectre_protocol.ref.
+name: Firmware
 
-on: [push]
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+
+permissions:
+  contents: write  # the release
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v2
-    - name: Cache pip
-      uses: actions/cache@v2
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-    - name: Cache PlatformIO
-      uses: actions/cache@v2
-      with:
-        path: ~/.platformio
-        key: ${{ runner.os }}-${{ hashFiles('**/lockfiles') }}
-    - name: Set up Python
-      uses: actions/setup-python@v2
-    - name: Install PlatformIO
-      run: |
-        python -m pip install --upgrade pip
-        pip install --upgrade platformio
-    - name: Build Banane_V1
-      run: pio run -e Banane_V1
-    - name: Build Banane_V1_noSD
-      run: pio run -e Banane_V1_noSD
-    # - name: Build Banane_V1_proto
-    #   run: pio run -e Banane_V1_proto
-    - name: Build matrix_64x64
-      run: pio run -e matrix_64x64
-    - name: Build matrix_cross
-      run: pio run -e matrix_cross
-    - name: Deploy
-      env:
-        SUPER_SECRET: ${{ secrets.TOKEN }} 
-      run: |
-        mv .pio/build/Banane_V1/firmware.bin         matrix_ble_player_Banane_V1.firm.bin
-        mv .pio/build/Banane_V1/bootloader.bin       matrix_ble_player_Banane_V1.boot.bin
-        mv .pio/build/Banane_V1/partitions.bin       matrix_ble_player_Banane_V1.part.bin
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # tags: git describe gives the version
 
-        mv .pio/build/Banane_V1_noSD/firmware.bin    matrix_ble_player_Banane_V1_noSD.firm.bin
-        mv .pio/build/Banane_V1_noSD/bootloader.bin  matrix_ble_player_Banane_V1_noSD.boot.bin
-        mv .pio/build/Banane_V1_noSD/partitions.bin  matrix_ble_player_Banane_V1_noSD.part.bin
+      - name: Read the spectre_protocol commit
+        id: proto
+        run: echo "ref=$(cat spectre_protocol.ref)" >> "$GITHUB_OUTPUT"
 
-        mv .pio/build/matrix_64x64/firmware.bin      matrix_ble_player_matrix_64x64.firm.bin
-        mv .pio/build/matrix_64x64/bootloader.bin    matrix_ble_player_matrix_64x64.boot.bin
-        mv .pio/build/matrix_64x64/partitions.bin    matrix_ble_player_matrix_64x64.part.bin
+      - uses: actions/checkout@v4
+        with:
+          repository: spectrenoir06/spectre_protocol
+          ref: ${{ steps.proto.outputs.ref }}
+          ssh-key: ${{ secrets.SPECTRE_PROTOCOL_KEY }}
+          path: spectre_protocol
 
-        mv .pio/build/matrix_cross/firmware.bin      matrix_ble_player_matrix_cross.firm.bin
-        mv .pio/build/matrix_cross/bootloader.bin    matrix_ble_player_matrix_cross.boot.bin
-        mv .pio/build/matrix_cross/partitions.bin    matrix_ble_player_matrix_cross.part.bin
+      # platformio.ini links ../../spectre_protocol (the two repos side by side)
+      - name: Put spectre_protocol where platformio.ini expects it
+        run: ln -s "$GITHUB_WORKSPACE/spectre_protocol" "$(cd ../.. && pwd)/spectre_protocol"
 
-        curl -sSF file=@matrix_ble_player_Banane_V1.firm.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
-        curl -sSF file=@matrix_ble_player_Banane_V1.boot.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
-        curl -sSF file=@matrix_ble_player_Banane_V1.part.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-        curl -sSF file=@matrix_ble_player_Banane_V1_noSD.firm.bin     'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
-        curl -sSF file=@matrix_ble_player_Banane_V1_noSD.boot.bin     'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
-        curl -sSF file=@matrix_ble_player_Banane_V1_noSD.part.bin     'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('platformio.ini') }}
 
-        curl -sSF file=@matrix_ble_player_matrix_64x64.firm.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
-        curl -sSF file=@matrix_ble_player_matrix_64x64.boot.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
-        curl -sSF file=@matrix_ble_player_matrix_64x64.part.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
+      - name: Install PlatformIO
+        run: pip install platformio
 
-        curl -sSF file=@matrix_ble_player_matrix_cross.firm.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
-        curl -sSF file=@matrix_ble_player_matrix_cross.boot.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
-        curl -sSF file=@matrix_ble_player_matrix_cross.part.bin         'https://antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
-        
-        echo `TZ="Europe/Paris" date '+%F %T'`" git:"`git rev-parse --short HEAD` > matrix_ble_player.info
-        curl -sSF file=@matrix_ble_player.info 'http:s//antoine.doussaud.org/upload?token='$SUPER_SECRET"&overwrite=true"
+      - name: Build
+        run: pio run -e matrix
 
+      # ESP Web Tools layout (manifest + images), as the app's install screen
+      # serves it from /matrix/firmware/
+      - name: Package
+        run: |
+          VERSION=$(git describe --tags --always)
+          python3 scripts/export_web.py out/firmware
+          tar -C out/firmware -czf "matrix-firmware-web.tar.gz" .
+          cp .pio/build/matrix/firmware.bin "matrix-firmware-$VERSION.bin"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matrix-firmware-${{ env.VERSION }}
+          path: |
+            matrix-firmware-web.tar.gz
+            matrix-firmware-*.bin
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            matrix-firmware-web.tar.gz
+            matrix-firmware-*.bin
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}  # v2.1.0-rc1: not "latest"

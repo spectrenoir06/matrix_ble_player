@@ -39,7 +39,7 @@ def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
     dest = Path(sys.argv[1]).expanduser()
-    version = subprocess.run(["git", "describe", "--always", "--dirty"], cwd=ROOT,
+    version = subprocess.run(["git", "describe", "--tags", "--always", "--dirty"], cwd=ROOT,
                              capture_output=True, text=True).stdout.strip() or "unknown"
 
     envs = sorted(p.parent.name for p in BUILD.glob("*/firmware.bin") if (p.parent / "bootloader.bin").exists())
