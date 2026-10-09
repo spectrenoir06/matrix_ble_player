@@ -79,6 +79,16 @@ public:
 
     void copyDMABuffer() { display->copyDMABuffer(); }
 
+    // Where the picture's pixel (x, y) is on the HUB75 chain; false: nowhere
+    // (outside the picture, or a hole of the layout's map)
+    bool physical(int16_t x, int16_t y, int16_t &px, int16_t &py)
+    {
+        VirtualCoords c = getCoords(x, y);
+        px = c.x;
+        py = c.y;
+        return c.x >= 0 && c.y >= 0;
+    }
+
 private:
     MatrixPanel_I2S_DMA *display;
 

@@ -7,6 +7,7 @@
 extern MatrixPanel_I2S_DMA *display;
 #include "Audio.hpp"
 #include "Layout.hpp"
+#include "Framebuffer.hpp"
 #include "Arena.hpp"
 #include "Protocol.hpp"
 #include "Log.hpp"
@@ -186,6 +187,28 @@ namespace {
     return push_audio(lua_state, Audio::wave);
   }
 
+  // scroll(dx, dy [, wrap]): shift what is on screen by (dx, dy) pixels
+  // (right / down positive) into the frame being drawn; draw the new edge,
+  // then updateDisplay(). Without wrap, black scrolls in.
+  static int lua_wrapper_scroll(lua_State *lua_state) {
+    int dx = luaL_checkinteger(lua_state, 1);
+    int dy = luaL_optinteger(lua_state, 2, 0);
+    bool wrap = lua_toboolean(lua_state, 3);
+    scroll_display(dx, dy, wrap);
+    return 0;
+  }
+
+  // getPixel(x, y): r, g, b of the frame being drawn (as near as the color
+  // depth keeps them); 0, 0, 0 outside the picture
+  static int lua_wrapper_getPixel(lua_State *lua_state) {
+    uint8_t r = 0, g = 0, b = 0;
+    get_pixel(luaL_checkinteger(lua_state, 1), luaL_checkinteger(lua_state, 2), r, g, b);
+    lua_pushinteger(lua_state, r);
+    lua_pushinteger(lua_state, g);
+    lua_pushinteger(lua_state, b);
+    return 3;
+  }
+
   static int lua_wrapper_getMatrix(lua_State *lua_state) {
     lua_pushinteger(lua_state, (lua_Integer)matrix_w);
     lua_pushinteger(lua_state, (lua_Integer)matrix_h);
@@ -231,6 +254,8 @@ namespace {
     lua.Lua_register("getMatrix",      (const lua_CFunction) &lua_wrapper_getMatrix);
     lua.Lua_register("getFFT",         (const lua_CFunction) &lua_wrapper_getFFT);
     lua.Lua_register("getWave",        (const lua_CFunction) &lua_wrapper_getWave);
+    lua.Lua_register("scroll",         (const lua_CFunction) &lua_wrapper_scroll);
+    lua.Lua_register("getPixel",       (const lua_CFunction) &lua_wrapper_getPixel);
     
     spectre_lua_plz_stop = 0;
     String ret = lua.Lua_dostring(&str->source, str->name.c_str());
