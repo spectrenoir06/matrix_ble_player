@@ -147,29 +147,9 @@ void playAnimeTask(void* parameter) {
 	#define HEAP_MARK(step)
 #endif
 
-void setup() {
-	Serial.setRxBufferSize(5120);  // Spectre Protocol over serial: holds an upload window
-	Serial.begin(115200);
-	HEAP_MARK("start (serial ready)");
-
-	Log.println("\n------------------------------");
-	Log.printf("  Hub75 LEDs driver\n");
-	Log.printf("  Hostname: %s\n", hostname);
-	int core = xPortGetCoreID();
-	Log.print("  Main code running on core ");
-	Log.println(core);
-	Log.println("------------------------------");
-
-	{
-		color_depth_max = protocol_wifi_mode() ? 5 : 7;
-		Preferences p;
-		p.begin("matrix", true);
-		color_depth = p.getUChar("depth", PIXEL_COLOR_DEPTH_BITS);
-		p.end();
-		color_depth = constrain(color_depth, 2, color_depth_max);
-		Log.printf("  Color depth: %u bits (max %u)\n", color_depth, color_depth_max);
-	}
-
+// The display (DMA buffers sized for `bits` per color) and its virtual panel.
+// At boot, and again when the color depth changes (matrix.depth.set).
+bool create_display(uint8_t bits) {
 	HUB75_I2S_CFG::i2s_pins _pins = {R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN};
 	
 	HUB75_I2S_CFG mxconfig(
@@ -179,7 +159,7 @@ void setup() {
 		_pins             // pin mapping
 	);
 
-	mxconfig.setPixelColorDepthBits(color_depth);
+	mxconfig.setPixelColorDepthBits(bits);
 	mxconfig.double_buff     = true;                    // use DMA double buffer (twice as much RAM required)
 	mxconfig.driver          = HUB75_I2S_CFG::SHIFTREG; // Matrix driver chip type - default is a plain shift register
 	mxconfig.i2sspeed        = HUB75_I2S_CFG::HZ_20M;   // I2S clock speed
@@ -193,12 +173,7 @@ void setup() {
 
 	display = new MatrixPanel_I2S_DMA(mxconfig);
 
-	display->begin();  // setup display with pins as pre-defined in the library
-	HEAP_MARK("display DMA buffers");
-
-	// GIF / PNG / Lua memory, while the heap is still in one piece
-	bool arena_ok = Arena::init();
-	HEAP_MARK("player arena");
+	bool ok = display->begin();  // setup display with pins as pre-defined in the library
 
 	#ifdef IS_CROSS
 		int16_t map[3*3] = {
@@ -225,6 +200,54 @@ void setup() {
 		int16_t map[1] = {0};
 		virtualDisp = new VirtualMatrixPanel((*display), 1, 1, 64, 32, map);
 	#endif
+
+	return ok;
+}
+
+// A new color depth, live: the caller stopped GIF / Lua (nothing draws). The
+// old display's DMA buffers are freed, new ones allocated. False: no RAM for
+// them (the caller reboots: the saved depth applies then).
+bool set_color_depth(uint8_t bits) {
+	delete virtualDisp;
+	virtualDisp = nullptr;
+	delete display;
+	display = nullptr;
+	if (!create_display(bits))
+		return false;
+	color_depth = bits;
+	set_brightness(brightness);
+	return true;
+}
+
+void setup() {
+	Serial.setRxBufferSize(5120);  // Spectre Protocol over serial: holds an upload window
+	Serial.begin(115200);
+	HEAP_MARK("start (serial ready)");
+
+	Log.println("\n------------------------------");
+	Log.printf("  Hub75 LEDs driver\n");
+	Log.printf("  Hostname: %s\n", hostname);
+	int core = xPortGetCoreID();
+	Log.print("  Main code running on core ");
+	Log.println(core);
+	Log.println("------------------------------");
+
+	{
+		color_depth_max = protocol_wifi_mode() ? 5 : 7;
+		Preferences p;
+		p.begin("matrix", true);
+		color_depth = p.getUChar("depth", PIXEL_COLOR_DEPTH_BITS);
+		p.end();
+		color_depth = constrain(color_depth, 2, color_depth_max);
+		Log.printf("  Color depth: %u bits (max %u)\n", color_depth, color_depth_max);
+	}
+
+	create_display(color_depth);
+	HEAP_MARK("display DMA buffers");
+
+	// GIF / PNG / Lua memory, while the heap is still in one piece
+	bool arena_ok = Arena::init();
+	HEAP_MARK("player arena");
 
 	set_brightness(BRIGHTNESS);
 	if (!arena_ok) {

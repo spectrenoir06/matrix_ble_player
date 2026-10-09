@@ -40,6 +40,7 @@ using namespace spectre;
 extern Preferences preferences;
 extern uint8_t brightness;
 extern uint8_t color_depth, color_depth_max;
+extern bool set_color_depth(uint8_t bits);
 extern void set_brightness(int b);
 extern void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w);
 extern void print_progress(const char *str, uint32_t offset, uint32_t total_size);
@@ -221,14 +222,40 @@ void matrix_info(Request& req) {
 	    .u8(color_depth).u8(color_depth_max);
 }
 
-// for the next boot: the DMA buffers are sized at boot
+// saved, then applied after the reply (protocol_loop): the display restarts
+uint8_t pending_depth = 0;
+
 void matrix_depth_set(Request& req) {
 	uint8_t bits = req.args.u8();
 	if (!req.args.ok() || bits < 2 || bits > color_depth_max)
 		return req.fail(error::BadArgs, "depth: 2 to depth_max bits");
 	preferences.putUChar("depth", bits);
-	Log.printf("color depth: %u bits, rebooting\n", bits);
-	reboot_at = millis() + 500;
+	pending_depth = bits;
+}
+
+// the display rebuilt with a new depth, what played plays again; no RAM for
+// the new buffers: reboot (the saved depth applies at boot)
+void apply_depth() {
+	uint8_t bits = pending_depth;
+	pending_depth = 0;
+	if (bits == color_depth)
+		return;
+	String was = now_playing;
+	if (!stop_all(false)) {
+		reboot_at = millis() + 300;
+		return;
+	}
+	uint32_t t0 = millis();
+	if (!set_color_depth(bits)) {
+		Log.line(LogLevel::Error, "color depth: no RAM for the display, rebooting");
+		reboot_at = millis() + 300;
+		return;
+	}
+	Log.printf("color depth: %u bits (%u ms), free heap %u\n", bits, millis() - t0, esp_get_free_heap_size());
+	if (was.length())
+		play_file(was.c_str());
+	else
+		set_playing("");
 }
 
 void matrix_board_set(Request& req) {
@@ -490,6 +517,8 @@ void protocol_loop() {
 		w.u8(e.level).str(e.text);
 		node.emit(method::SysLog, w);
 	}
+	if (pending_depth)
+		apply_depth();
 	if (reboot_at && millis() > reboot_at)
 		ESP.restart();
 }
