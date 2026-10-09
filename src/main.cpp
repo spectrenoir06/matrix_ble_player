@@ -27,6 +27,9 @@ uint8_t brightness = 50;
 // the layout's default otherwise; capped to what RAM allows (Layout.cpp).
 uint8_t color_depth = 5;
 uint8_t color_depth_max = 7;
+// Below this much free heap, BLE, uploads and updates start failing (seen at
+// 8.5 KB): too many bits for the display, the depth goes back down.
+extern const uint32_t MIN_FREE_HEAP = 20 * 1024;  // extern: Protocol.cpp reads it
 File root;
 
 VirtualMatrixPanel  *virtualDisp = nullptr;
@@ -126,6 +129,31 @@ void playAnimeTask(void* parameter) {
 	#define HEAP_MARK(step)
 #endif
 
+// The library doesn't survive a failed DMA allocation (it carries on with a
+// null descriptor list and crashes): first, the same allocations for real, in
+// its order (each row's data for both buffers, then the two descriptor lists,
+// one block each), with MIN_FREE_HEAP left for the rest. Free heap in pieces
+// won't do: the rows split the big blocks the descriptors need.
+static bool display_fits(uint8_t bits) {
+	const Layout& l = *layout;
+	const int rows = l.panel_h;  // row pairs × 2 buffers
+	size_t row = size_t(l.panel_w) * l.chain * bits * 2;
+	size_t desc = (size_t(1) << (bits - 1)) * (l.panel_h / 2) * 12;  // lldesc_t per pass per row (most a depth needs)
+	void* block[64 + 2] = {};
+	int n = 0;
+	bool ok = rows <= 64;
+	for (int i = 0; ok && i < rows; i++)
+		ok = (block[n++] = heap_caps_malloc(row, MALLOC_CAP_DMA)) != nullptr;
+	for (int i = 0; ok && i < 2; i++)
+		ok = (block[n++] = heap_caps_malloc(desc + 2048, MALLOC_CAP_DMA)) != nullptr;  // + its small allocations in between
+	ok = ok && esp_get_free_heap_size() >= MIN_FREE_HEAP;
+	while (n)
+		free(block[--n]);
+	if (!ok)
+		Log.printf("display: not enough RAM for %u bits\n", bits);
+	return ok;
+}
+
 // The display (DMA buffers sized for `bits` per color) and its virtual panel,
 // as the layout says. At boot, and again when the color depth changes
 // (matrix.depth.set).
@@ -149,6 +177,8 @@ bool create_display(uint8_t bits) {
 	mxconfig.clkphase        = false;                   // I2S clock phase
 	mxconfig.latch_blanking  = l.fm6124 ? 5 : 1;        // clock cycles OE stays off around LAT
 
+	if (!display_fits(bits))
+		return false;
 	display = new MatrixPanel_I2S_DMA(mxconfig);
 
 	bool ok = display->begin();
@@ -205,7 +235,9 @@ void setup() {
 	while (!create_display(color_depth) && color_depth > 2) {
 		Log.printf("  no RAM for the display at %u bits\n", color_depth);
 		delete virtualDisp;
+		virtualDisp = nullptr;
 		delete display;
+		display = nullptr;
 		color_depth_max = --color_depth;
 	}
 	HEAP_MARK("display DMA buffers");
@@ -311,6 +343,15 @@ void setup() {
 		pAdvertising->start();
 	}
 	HEAP_MARK("advertising: end of setup");
+	// the RAM model (Layout.cpp) is an estimate: a depth that leaves too little
+	// for the rest would make the board unreachable, one bit less next boot
+	if (esp_get_free_heap_size() < MIN_FREE_HEAP && color_depth > 2) {
+		Log.printf("only %u B free at %u bits: %u bits from now on, rebooting\n", esp_get_free_heap_size(), color_depth,
+		           color_depth - 1);
+		preferences.putUChar("depth", color_depth - 1);
+		delay(100);
+		ESP.restart();
+	}
 	Log.println("Waiting a client connection to notify...");
 }
 

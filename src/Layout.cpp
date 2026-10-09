@@ -13,6 +13,7 @@ const Layout LAYOUTS[] = {
     {"ricard", "Ricard 64×96 (6 panels)", 192, 32, 1, true, -1, true, 3, 2, 32, 32, {0, 1, 2, 3, 4, 5}, 5, 50},
     {"mirror", "64×64, E pin 12", 64, 64, 1, true, 12, false, 1, 1, 64, 64, {0}, 5, 50},
     {"64x64", "64×64, no E pin", 64, 64, 1, false, -1, false, 1, 1, 64, 64, {0}, 5, 50},
+    {"32x32", "32×32", 32, 32, 1, false, -1, false, 1, 1, 32, 32, {0}, 7, 50},
 };
 const uint8_t LAYOUT_COUNT = sizeof(LAYOUTS) / sizeof(LAYOUTS[0]);
 const Layout* layout = &LAYOUTS[0];
@@ -59,12 +60,16 @@ uint32_t display_bytes(const Layout& l, uint8_t bits) {
 	return data + desc;
 }
 
+// BLE: what a 64×32 at 7 bits takes (8: 9 KB left, BLE fails), WiFi: at 5
+// bits (6 was too tight)
+static uint32_t budget(bool wifi) {
+	return wifi ? 32 * 1024 : 71 * 1024;
+}
+
 uint8_t layout_depth_max(const Layout& l, bool wifi) {
-	// BLE: what a 64×32 at 7 bits takes, WiFi: at 5 bits (6 was too tight)
-	const uint32_t budget = wifi ? 32 * 1024 : 71 * 1024;
 	const uint8_t lowest = wifi ? 4 : 2;  // WiFi at fewer bits: not worth it
 	for (uint8_t bits = 8; bits >= lowest; bits--)
-		if (display_bytes(l, bits) <= budget)
+		if (display_bytes(l, bits) <= budget(wifi))
 			return bits;
 	return wifi ? 0 : 2;
 }

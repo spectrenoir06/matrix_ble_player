@@ -35,6 +35,7 @@ extern Preferences preferences;
 extern uint8_t brightness;
 extern uint8_t color_depth, color_depth_max;
 extern bool set_color_depth(uint8_t bits);
+extern const uint32_t MIN_FREE_HEAP;
 extern void set_brightness(int b);
 extern void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w);
 extern void print_progress(const char *str, uint32_t offset, uint32_t total_size);
@@ -251,12 +252,13 @@ void matrix_depth_set(Request& req) {
 	uint8_t bits = req.args.u8();
 	if (!req.args.ok() || bits < 2 || bits > color_depth_max)
 		return req.fail(error::BadArgs, "depth: 2 to depth_max bits");
-	preferences.putUChar("depth", bits);
-	pending_depth = bits;
+	pending_depth = bits;  // saved once it proves to fit (apply_depth)
 }
 
-// the display rebuilt with a new depth, what played plays again; no RAM for
-// the new buffers: reboot (the saved depth applies at boot)
+// the display rebuilt with a new depth, what played plays again. Its buffers
+// don't fit in the RAM left in pieces: saved, tried at the next boot (the heap
+// is whole then; still too much: boots one bit less). Too little RAM left
+// with them: back to the previous depth, not saved.
 void apply_depth() {
 	uint8_t bits = pending_depth;
 	pending_depth = 0;
@@ -267,13 +269,27 @@ void apply_depth() {
 		reboot_at = millis() + 300;
 		return;
 	}
+	uint8_t previous = color_depth;
 	uint32_t t0 = millis();
 	if (!set_color_depth(bits)) {
-		Log.line(LogLevel::Error, "color depth: no RAM for the display, rebooting");
-		reboot_at = millis() + 300;
+		Log.line(LogLevel::Error, "color depth: RAM in pieces, restarting to try at boot");
+		bool back = set_color_depth(previous);  // something on screen meanwhile
+		preferences.putUChar("depth", bits);
+		reboot_at = millis() + (back ? 300 : 0);
 		return;
 	}
-	Log.printf("color depth: %u bits (%u ms), free heap %u\n", bits, millis() - t0, esp_get_free_heap_size());
+	if (esp_get_free_heap_size() < MIN_FREE_HEAP) {
+		char msg[96];
+		snprintf(msg, sizeof(msg), "color depth: not enough RAM for %u bits, back to %u", bits, previous);
+		Log.line(LogLevel::Error, msg);
+		if (!set_color_depth(previous)) {
+			reboot_at = millis() + 300;
+			return;
+		}
+	} else {
+		preferences.putUChar("depth", bits);
+		Log.printf("color depth: %u bits (%u ms), free heap %u\n", bits, millis() - t0, esp_get_free_heap_size());
+	}
 	if (was.length())
 		play_file(was.c_str());
 	else
