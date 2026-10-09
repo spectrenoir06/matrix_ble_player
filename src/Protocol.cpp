@@ -39,6 +39,7 @@ using namespace spectre;
 
 extern Preferences preferences;
 extern uint8_t brightness;
+extern uint8_t color_depth, color_depth_max;
 extern void set_brightness(int b);
 extern void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w);
 extern void print_progress(const char *str, uint32_t offset, uint32_t total_size);
@@ -216,7 +217,18 @@ void clear(Request& req) {
 // ── matrix ───────────────────────────────────────────────────────────────────
 
 void matrix_info(Request& req) {
-	req.result.u16(MATRIX_WIDTH).u16(MATRIX_HEIGHT).u16(V_MATRIX_WIDTH).u16(V_MATRIX_HEIGHT).str(board);
+	req.result.u16(MATRIX_WIDTH).u16(MATRIX_HEIGHT).u16(V_MATRIX_WIDTH).u16(V_MATRIX_HEIGHT).str(board)
+	    .u8(color_depth).u8(color_depth_max);
+}
+
+// for the next boot: the DMA buffers are sized at boot
+void matrix_depth_set(Request& req) {
+	uint8_t bits = req.args.u8();
+	if (!req.args.ok() || bits < 2 || bits > color_depth_max)
+		return req.fail(error::BadArgs, "depth: 2 to depth_max bits");
+	preferences.putUChar("depth", bits);
+	Log.printf("color depth: %u bits, rebooting\n", bits);
+	reboot_at = millis() + 500;
 }
 
 void matrix_board_set(Request& req) {
@@ -364,6 +376,7 @@ void protocol_begin(NimBLEServer* server) {
 	node.on(method::MatrixPlay, matrix_play);
 	node.on(method::MatrixStop, matrix_stop);
 	node.on(method::MatrixPlaying, matrix_playing);
+	node.on(method::MatrixDepthSet, matrix_depth_set);
 
 	log_queue = xQueueCreate(8, sizeof(LogEntry));
 	if (server) {

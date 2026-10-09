@@ -240,7 +240,7 @@ namespace SpectrePng {
         if (a != 255) {  // over black
           r = r * a / 255; g = g * a / 255; b = b * a / 255;
         }
-        virtualDisp->drawPixel(px, py, virtualDisp->color565(r, g, b));
+        virtualDisp->drawPixelRGB888(px, py, r, g, b);  // full 8-bit color (not RGB565)
       }
     }
     flip_matrix();

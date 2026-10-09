@@ -41,6 +41,13 @@ MatrixPanel_I2S_DMA *display = nullptr;
 char	hostname[50] = DEFAULT_HOSTNAME;
 
 uint8_t brightness = BRIGHTNESS;
+// Color depth (bits per color): saved ("depth", set with matrix.depth.set),
+// PIXEL_COLOR_DEPTH_BITS by default; capped to what RAM allows. The display's
+// DMA descriptors double with each bit: free heap in BLE mode measured at
+// 64 KB (5 bits), 54 KB (6), 37 KB (7), 9 KB (8: too little). WiFi mode
+// has less room: 5 bits.
+uint8_t color_depth = PIXEL_COLOR_DEPTH_BITS;
+uint8_t color_depth_max = 7;
 File root;
 
 VirtualMatrixPanel  *virtualDisp = nullptr;
@@ -153,6 +160,16 @@ void setup() {
 	Log.println(core);
 	Log.println("------------------------------");
 
+	{
+		color_depth_max = protocol_wifi_mode() ? 5 : 7;
+		Preferences p;
+		p.begin("matrix", true);
+		color_depth = p.getUChar("depth", PIXEL_COLOR_DEPTH_BITS);
+		p.end();
+		color_depth = constrain(color_depth, 2, color_depth_max);
+		Log.printf("  Color depth: %u bits (max %u)\n", color_depth, color_depth_max);
+	}
+
 	HUB75_I2S_CFG::i2s_pins _pins = {R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN};
 	
 	HUB75_I2S_CFG mxconfig(
@@ -162,6 +179,7 @@ void setup() {
 		_pins             // pin mapping
 	);
 
+	mxconfig.setPixelColorDepthBits(color_depth);
 	mxconfig.double_buff     = true;                    // use DMA double buffer (twice as much RAM required)
 	mxconfig.driver          = HUB75_I2S_CFG::SHIFTREG; // Matrix driver chip type - default is a plain shift register
 	mxconfig.i2sspeed        = HUB75_I2S_CFG::HZ_20M;   // I2S clock speed
