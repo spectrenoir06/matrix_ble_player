@@ -6,7 +6,7 @@
 #include "Log.hpp"
 #include <stdint.h>
 
-// Spectre Protocol (../spectre_protocol) over BLE, serial and (USE_WIFI)
+// Spectre Protocol (../spectre_protocol) over BLE, serial and
 // WebSocket. Handlers run in loop(), from protocol_loop().
 // server: the BLE server, nullptr in WiFi mode (BLE off).
 void protocol_begin(NimBLEServer* server);

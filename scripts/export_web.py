@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Copy every built env into a folder ESP Web Tools can flash from: the
+"""Copy every built env (now one: `matrix`, for every board) into a folder ESP Web Tools can flash from: the
 Spectre Matrix app's install page (install.html) puts the firmware on a new,
 blank driver board over USB.
 
-    pio run                      # build all envs first
+    pio run                      # build first
     scripts/export_web.py <dest> # e.g. a local folder, then rsync it to the
                                  # server next to the app: <app>/firmware/
 
@@ -31,13 +31,7 @@ PARTS = [
 
 # what each env is, for people choosing on the install page
 DESCRIPTIONS = {
-    "Banane_V1": "Banane V1: 64×32, SD card, Bluetooth + WiFi",
-    "Banane_V1_noSD": "Banane V1 without SD card (files in flash)",
-    "64x64": "64×64 panel",
-    "matrix_64x64": "64×64 matrix",
-    "matrix_cross": "Cross: 5 panels of 32×32",
-    "matrix_ricard": "Ricard: 6 panels of 32×32",
-    "Printer": "Printer: 128×32",
+    "matrix": "Every board: choose its panels afterwards in the app (Settings → Display)",
 }
 
 

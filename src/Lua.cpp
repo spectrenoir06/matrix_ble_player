@@ -5,6 +5,7 @@
 #include <Mapping.h>
 
 extern MatrixPanel_I2S_DMA *display;
+#include "Layout.hpp"
 #include "Arena.hpp"
 #include "Protocol.hpp"
 #include "Log.hpp"
@@ -158,8 +159,8 @@ namespace {
   }
 
   static int lua_wrapper_getMatrix(lua_State *lua_state) {
-    lua_pushinteger(lua_state, (lua_Integer)V_MATRIX_WIDTH);
-    lua_pushinteger(lua_state, (lua_Integer)V_MATRIX_HEIGHT);
+    lua_pushinteger(lua_state, (lua_Integer)matrix_w);
+    lua_pushinteger(lua_state, (lua_Integer)matrix_h);
     return 2;
   }
 

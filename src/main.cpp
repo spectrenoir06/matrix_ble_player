@@ -4,49 +4,28 @@
 #include <Preferences.h>
 Preferences preferences;
 
-#ifdef USE_SD
-	#include "FS.h"
-	#include "SD.h"
-	#include "SPI.h"
-	#define filesystem SD
-#endif
-#ifdef USE_SPIFFS
-	#include "SPIFFS.h"
-	#define filesystem SPIFFS
-#endif
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <NimBLEDevice.h>
 #include <esp_bt.h>
 #include "Arena.hpp"
 #include "Gif.hpp"
 #include "Lua.hpp"
+#include "Layout.hpp"
 #include "Protocol.hpp"
+#include "Storage.hpp"
 #include "Log.hpp"
 
 // Advertised so clients can spot Spectre devices (spectre_protocol PROTOCOL.md §2.1)
 #define ADV_UUID_SPECTRE "4242"
 
-#define DEFAULT_HOSTNAME	HOSTNAME
-#define AP_SSID				HOSTNAME
-
-#ifdef USE_SD
-	const int SD_CS   = SD_CS_PIN;
-	const int SD_SCK  = SD_SCK_PIN;
-	const int SD_MOSI = SD_MOSI_PIN;
-	const int SD_MISO = SD_MISO_PIN;
-#endif
-
 MatrixPanel_I2S_DMA *display = nullptr;
 
-char	hostname[50] = DEFAULT_HOSTNAME;
+char	hostname[50];  // the BLE name: "<board name> <end of the MAC>"
 
-uint8_t brightness = BRIGHTNESS;
+uint8_t brightness = 50;
 // Color depth (bits per color): saved ("depth", set with matrix.depth.set),
-// PIXEL_COLOR_DEPTH_BITS by default; capped to what RAM allows. The display's
-// DMA descriptors double with each bit: free heap in BLE mode measured at
-// 64 KB (5 bits), 54 KB (6), 37 KB (7), 9 KB (8: too little). WiFi mode
-// has less room: 5 bits.
-uint8_t color_depth = PIXEL_COLOR_DEPTH_BITS;
+// the layout's default otherwise; capped to what RAM allows (Layout.cpp).
+uint8_t color_depth = 5;
 uint8_t color_depth_max = 7;
 File root;
 
@@ -78,17 +57,17 @@ extern void hsv2rgb(uint16_t h, uint8_t s, uint8_t v, uint8_t *r, uint8_t *g, ui
 
 void print_progress(const char *str, uint32_t offset, uint32_t total_size) {
 	virtualDisp->clearScreen();
-	virtualDisp->setCursor(4, V_MATRIX_HEIGHT / 2 - 14);
+	virtualDisp->setCursor(4, matrix_h / 2 - 14);
 	virtualDisp->setTextSize(1);
 	virtualDisp->setTextColor(display->color565(255,255,255));
 	virtualDisp->printf(str);
-	virtualDisp->fillRect(4, V_MATRIX_HEIGHT/2, V_MATRIX_WIDTH - 4 * 2, 8, 255, 255, 255);
+	virtualDisp->fillRect(4, matrix_h/2, matrix_w - 4 * 2, 8, 255, 255, 255);
 	uint8_t r, g, b;
 	hsv2rgb(hue += 14, 255, 255, &r, &g, &b);  // a rainbow, one step per update
 	virtualDisp->fillRect(
 		4+1,
-		(V_MATRIX_HEIGHT/2)+1,
-		map(offset, 0, total_size, 0, ((V_MATRIX_WIDTH) - 4 * 2 - 2)),
+		(matrix_h/2)+1,
+		map(offset, 0, total_size, 0, (matrix_w - 4 * 2 - 2)),
 		8 - 2,
 		r,
 		g,
@@ -100,7 +79,7 @@ void print_progress(const char *str, uint32_t offset, uint32_t total_size) {
 void print_message(const char *str) {
 	Log.printf("print_message: %s", str);
 	virtualDisp->clearScreen();
-	virtualDisp->setCursor(0, V_MATRIX_HEIGHT/2-16);
+	virtualDisp->setCursor(0, matrix_h/2-16);
 	virtualDisp->setTextSize(1);
 	virtualDisp->setTextColor(virtualDisp->color565(255,255,255));
 	virtualDisp->setTextWrap(true);
@@ -147,59 +126,37 @@ void playAnimeTask(void* parameter) {
 	#define HEAP_MARK(step)
 #endif
 
-// The display (DMA buffers sized for `bits` per color) and its virtual panel.
-// At boot, and again when the color depth changes (matrix.depth.set).
+// The display (DMA buffers sized for `bits` per color) and its virtual panel,
+// as the layout says. At boot, and again when the color depth changes
+// (matrix.depth.set).
 bool create_display(uint8_t bits) {
-	HUB75_I2S_CFG::i2s_pins _pins = {R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN};
-	
-	HUB75_I2S_CFG mxconfig(
-		MATRIX_WIDTH,     // Module width
-		MATRIX_HEIGHT,    // Module height
-		MATRIX_CHAIN,     // chain length
-		_pins             // pin mapping
-	);
+	const Layout& l = *layout;
+	// G and B lines: two wirings in use (Layout::gb_swapped)
+	int8_t g1 = 25, b1 = 32, g2 = 23, b2 = 26;
+	if (l.gb_swapped) {
+		std::swap(g1, b1);
+		std::swap(g2, b2);
+	}
+	HUB75_I2S_CFG::i2s_pins _pins = {33, g1, b1, 27, g2, b2, 22, 21, 19, 18, l.e_pin, 17, 16, 5};
+	//                               R1          R2          A   B   C   D   E        LAT OE CLK
+
+	HUB75_I2S_CFG mxconfig(l.panel_w, l.panel_h, l.chain, _pins);
 
 	mxconfig.setPixelColorDepthBits(bits);
 	mxconfig.double_buff     = true;                    // use DMA double buffer (twice as much RAM required)
-	mxconfig.driver          = HUB75_I2S_CFG::SHIFTREG; // Matrix driver chip type - default is a plain shift register
+	mxconfig.driver          = l.fm6124 ? HUB75_I2S_CFG::FM6124 : HUB75_I2S_CFG::SHIFTREG;
 	mxconfig.i2sspeed        = HUB75_I2S_CFG::HZ_20M;   // I2S clock speed
 	mxconfig.clkphase        = false;                   // I2S clock phase
-	mxconfig.latch_blanking  = 1;                       // How many clock cycles to blank OE before/after LAT signal change, default is 1 clock
-
-	#ifdef IS_RICARD
-		mxconfig.driver          = HUB75_I2S_CFG::FM6124;
-		mxconfig.latch_blanking  = 5;
-	#endif
+	mxconfig.latch_blanking  = l.fm6124 ? 5 : 1;        // clock cycles OE stays off around LAT
 
 	display = new MatrixPanel_I2S_DMA(mxconfig);
 
-	bool ok = display->begin();  // setup display with pins as pre-defined in the library
+	bool ok = display->begin();
 
-	#ifdef IS_CROSS
-		int16_t map[3*3] = {
-			-1, 4, -1,
-			1,  2,  3,
-			-1, 0, -1
-		};
-		virtualDisp = new VirtualMatrixPanel((*display), 3, 3, 32, 32, map);
-	#elif IS_PRINTER
-		int16_t map[1] = {0};
-		virtualDisp = new VirtualMatrixPanel((*display), 1, 1, 128, 32, map);
-	#elif IS_RICARD
-			int16_t map[2*3] = {
-			0, 1,
-			2, 3,
-			4, 5
-		};
-		// int16_t map[1] = {0};
-		virtualDisp = new VirtualMatrixPanel((*display), 3, 2, 32, 32, map);
-	#elif IS_64x64
-		int16_t map[1] = {0};
-		virtualDisp = new VirtualMatrixPanel((*display), 1, 1, 64, 64, map);
-	#else
-		int16_t map[1] = {0};
-		virtualDisp = new VirtualMatrixPanel((*display), 1, 1, 64, 32, map);
-	#endif
+	int16_t map[9];
+	for (int i = 0; i < 9; i++)
+		map[i] = l.map[i];
+	virtualDisp = new VirtualMatrixPanel((*display), l.rows, l.cols, l.tile_w, l.tile_h, map);
 
 	return ok;
 }
@@ -226,74 +183,56 @@ void setup() {
 
 	Log.println("\n------------------------------");
 	Log.printf("  Hub75 LEDs driver\n");
-	Log.printf("  Hostname: %s\n", hostname);
 	int core = xPortGetCoreID();
 	Log.print("  Main code running on core ");
 	Log.println(core);
 	Log.println("------------------------------");
 
 	{
-		color_depth_max = protocol_wifi_mode() ? 5 : 7;
+		layout_begin();
+		color_depth_max = layout_depth_max(*layout, protocol_wifi_mode());
 		Preferences p;
 		p.begin("matrix", true);
-		color_depth = p.getUChar("depth", PIXEL_COLOR_DEPTH_BITS);
+		color_depth = p.getUChar("depth", layout->depth);
 		p.end();
 		color_depth = constrain(color_depth, 2, color_depth_max);
+		brightness = layout->brightness;
+		Log.printf("  Layout: %s, %ux%u\n", layout->name, matrix_w, matrix_h);
 		Log.printf("  Color depth: %u bits (max %u)\n", color_depth, color_depth_max);
 	}
 
-	create_display(color_depth);
+	// the model in Layout.cpp is an estimate: fewer bits if RAM says no
+	while (!create_display(color_depth) && color_depth > 2) {
+		Log.printf("  no RAM for the display at %u bits\n", color_depth);
+		delete virtualDisp;
+		delete display;
+		color_depth_max = --color_depth;
+	}
 	HEAP_MARK("display DMA buffers");
 
 	// GIF / PNG / Lua memory, while the heap is still in one piece
 	bool arena_ok = Arena::init();
 	HEAP_MARK("player arena");
 
-	set_brightness(BRIGHTNESS);
+	set_brightness(brightness);
 	if (!arena_ok) {
 		print_message("No RAM\nfor player");
 		delay(2000);
 	}
 
-	#ifdef USE_SD
-		// Initialize SD card
-		SPI.begin(SD_SCK, SD_MISO, SD_MOSI);
-		// 20 MHz SPI (5x faster listings, uploads, GIF reads); the library's
-		// default 4 MHz as a fallback for cards / wiring that can't do it
-		for (int i=0; i<20; i++) {
-			uint32_t freq = i < 3 ? 20000000 : 4000000;
-			// 3 files open at most (default 5): each one reserves a 4 KB buffer
-			if (!filesystem.begin(SD_CS, SPI, freq, "/sd", 3)) {
-				Log.println("Card Mount Failed");
-				print_message("Can't mnt\nSD Card!\n");
-				delay(10);
-			} else {
-				is_fs_mnt = 1;
-				Log.printf("SD card mounted at %u MHz\n", freq / 1000000);
-				break;
-			}
-		}
-	#endif
+	if (storage_begin())
+		is_fs_mnt = 1;
+	else
+		print_message("Can't mnt\nSD / SPIFFS");
 
-	#ifdef USE_SPIFFS
-		if (!filesystem.begin(true)) {
-			Log.println("An Error has occurred while mounting SPIFFS");
-			print_message("Can't mnt\nSPIFFS!");
-			// ESP.restart();
-		} else {
-			Log.println("mounting SPIFFS OK");
-			is_fs_mnt = 1;
-		}
-	#endif
-
-	HEAP_MARK("SD card mounted");
+	HEAP_MARK("SD card / SPIFFS mounted");
 	String boot_anim;  // played once GIF / Lua tasks exist
 	preferences.begin("matrix", false);
 	if (is_fs_mnt) {
 		board_begin();  // /matrix/<board>/{gif,png,lua}
-		root = filesystem.open(board_dir("gif"));
+		root = storage->open(board_dir("gif"));
 		String saved = preferences.getString("anim", "");
-		if (saved.length() && filesystem.exists(saved)) {
+		if (saved.length() && storage->exists(saved)) {
 			Log.printf("Start previous anim %s\n", saved.c_str());
 			boot_anim = saved;
 		} else {  // nothing saved, or deleted since: the board's first GIF
@@ -308,6 +247,14 @@ void setup() {
 	}
 
 	HEAP_MARK("board, preferences");
+	{  // BLE name: the board name ("default": the app's name), then the MAC's end
+		String name = preferences.getString("board", "");
+		if (name.length() == 0 || name == "default")
+			name = "Spectre Matrix";
+		name.setCharAt(0, toupper(name[0]));  // "banana" → "Banana 1A2B"
+		strlcpy(hostname, name.c_str(), sizeof(hostname) - 6);
+		strcat(hostname, " ");
+	}
 	BLEAdvertising *pAdvertising = nullptr;
 	if (protocol_wifi_mode()) {  // no RAM for both radios
 		Log.println("WiFi mode: BLE off");

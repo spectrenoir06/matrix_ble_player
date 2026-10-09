@@ -7,11 +7,9 @@
 #include <spectre/fs_arduino.h>
 #include <spectre/ota_esp32.h>
 #include <spectre/serial_link.h>
-#ifdef USE_WIFI
-	#include <esp_wifi.h>
-	#include <spectre/wifi_esp32.h>
-	#include <spectre/ws_async.h>
-#endif
+#include <esp_wifi.h>
+#include <spectre/wifi_esp32.h>
+#include <spectre/ws_async.h>
 
 #include "Gif.hpp"
 #include "Lua.hpp"
@@ -19,14 +17,10 @@
 #include "Protocol.hpp"
 #include "Log.hpp"
 
-#ifdef USE_SD
-	#include "SD.h"
-	#define filesystem SD
-#endif
-#ifdef USE_SPIFFS
-	#include "SPIFFS.h"
-	#define filesystem SPIFFS
-#endif
+#include "Layout.hpp"
+#include "Storage.hpp"
+#include <SD.h>
+#include <SPIFFS.h>
 
 #ifndef FIRMWARE_VERSION
 	#define FIRMWARE_VERSION "1.0.0"
@@ -66,20 +60,29 @@ NimBLELink ble(10240, 2048);
 SerialLink serial(Serial, 1024, [](uint32_t baud) { Serial.updateBaudRate(baud); }, 115200);
 uint32_t reboot_at = 0;
 
-#ifdef USE_SD
-ArduinoFileSystem fs(SD, [] { return SD.totalBytes(); }, [] { return SD.usedBytes(); }, true, "/sd");
-#else  // SPIFFS: flat, no real directories
-ArduinoFileSystem fs(SPIFFS, [] { return uint64_t(SPIFFS.totalBytes()); }, [] { return uint64_t(SPIFFS.usedBytes()); }, false,
-                     "/spiffs");
-#endif
-FileModule files(node, fs);
+// the SD card, else SPIFFS (flat: no real directories); the one mounted at
+// boot (Storage.cpp), FileModule calls go to it
+ArduinoFileSystem sd_fs(SD, storage_total, storage_used, true, "/sd");
+ArduinoFileSystem spiffs_fs(SPIFFS, storage_total, storage_used, false, "/spiffs");
+struct MountedFileSystem : FileSystem {
+	FileSystem& fs() { return storage_is_sd ? static_cast<FileSystem&>(sd_fs) : spiffs_fs; }
+	bool stat(const char* path, FileStat& st) override { return fs().stat(path, st); }
+	bool list(const char* dir, const ListFn& fn) override { return fs().list(dir, fn); }
+	bool mkdir(const char* path) override { return fs().mkdir(path); }
+	bool remove(const char* path) override { return fs().remove(path); }
+	bool rmdir(const char* path) override { return fs().rmdir(path); }
+	bool rename(const char* from, const char* to) override { return fs().rename(from, to); }
+	bool usage(uint64_t& total, uint64_t& used) override { return fs().usage(total, used); }
+	std::unique_ptr<FileReader> openRead(const char* path) override { return fs().openRead(path); }
+	std::unique_ptr<FileWriter> openWrite(const char* path) override { return fs().openWrite(path); }
+} mounted_fs;
+FileModule files(node, mounted_fs);
 OtaModule ota(node);  // firmware updates over BLE or serial (replaces BLEOTA)
 
 bool ble_on = false;
 
 }  // namespace
 
-#ifdef USE_WIFI
 // WiFi buffers: Arduino lets WiFi take up to 32 RX + 32 TX buffers of 1.6 KB
 // under heavy traffic (~100 KB): on this board the heap ran out and WiFi got
 // stuck. Fewer of them (linked with -Wl,--wrap=esp_wifi_init): a bit slower,
@@ -92,14 +95,13 @@ extern "C" esp_err_t __wrap_esp_wifi_init(const wifi_init_config_t* config) {
 	cfg.rx_ba_win = 6 < cfg.dynamic_rx_buf_num ? 6 : cfg.dynamic_rx_buf_num;
 	return __real_esp_wifi_init(&cfg);
 }
-#endif
 
 namespace {
 
-#ifdef USE_WIFI
 // WiFi (network set with wifi.set, saved): the app from the SD card on
 // http://<board>.local/ and the protocol on ws://<board>.local/ws.
-// RAM is too short for WiFi next to BLE (no PSRAM): the board runs either
+// RAM is too short for WiFi next to BLE (no PSRAM), and next to the bigger
+// layouts' displays (layout_depth_max): the board runs either
 // - BLE mode: no network saved; wifi.set saves one and reboots into WiFi;
 // - WiFi mode: a network saved; BLE off. Not connected 20 s after boot:
 //   reboots into BLE mode for that boot only (fix the network over BLE).
@@ -112,7 +114,6 @@ AsyncWebServer http(80);
 // 1 KB packets: ≈ 7 KB of buffers (allocated once WiFi is up). 2 KB ones go
 // ~60% faster but cost 7 KB more, and RAM is what keeps WiFi stable here.
 AsyncWsLink ws("/ws", 1024, 4 * 1028);
-#endif
 
 // ── board: /matrix/<board>/{gif,png,lua} ─────────────────────────────────────
 
@@ -130,13 +131,13 @@ bool valid_board(const char* name) {
 }
 
 void board_make_dirs() {
-	filesystem.mkdir("/matrix");
-	filesystem.mkdir(board_dir());
+	storage->mkdir("/matrix");
+	storage->mkdir(board_dir());
 	for (const char* sub : BOARD_SUBDIRS)
-		filesystem.mkdir(board_dir(sub));
+		storage->mkdir(board_dir(sub));
 }
 
-// Reads a str argument as an absolute path that stays inside the filesystem.
+// Reads a str argument as an absolute path that stays inside the storage->
 bool read_path(Request& req, char* path) {
 	req.args.str(path, FileModule::PATH_MAX_LEN);
 	return req.args.ok() && FileModule::validPath(path);
@@ -218,8 +219,29 @@ void clear(Request& req) {
 // ── matrix ───────────────────────────────────────────────────────────────────
 
 void matrix_info(Request& req) {
-	req.result.u16(MATRIX_WIDTH).u16(MATRIX_HEIGHT).u16(V_MATRIX_WIDTH).u16(V_MATRIX_HEIGHT).str(board)
-	    .u8(color_depth).u8(color_depth_max);
+	req.result.u16(layout->panel_w * layout->chain).u16(layout->panel_h).u16(matrix_w).u16(matrix_h).str(board)
+	    .u8(color_depth).u8(color_depth_max).str(layout->id);
+}
+
+void matrix_layouts(Request& req) {
+	req.result.u8(LAYOUT_COUNT);
+	for (uint8_t i = 0; i < LAYOUT_COUNT; i++) {
+		const Layout& l = LAYOUTS[i];
+		req.result.str(l.id).str(l.name).u16(l.cols * l.tile_w).u16(l.rows * l.tile_h)
+		    .u8(layout_depth_max(l, false)).u8(layout_depth_max(l, true) != 0);
+	}
+}
+
+// saved, then a reboot: the display's buffers are sized at boot
+void matrix_layout_set(Request& req) {
+	char id[33];
+	req.args.str(id, sizeof(id));
+	if (!req.args.ok() || !layout_save(id))
+		return req.fail(error::BadArgs, "layout: an id of matrix.layouts");
+	if (strcmp(id, layout->id) != 0) {
+		Log.printf("layout: %s, rebooting\n", id);
+		reboot_at = millis() + 300;
+	}
 }
 
 // saved, then applied after the reply (protocol_loop): the display restarts
@@ -309,7 +331,7 @@ uint16_t play_file(const char* path) {
 	bool gif = has_ext(path, ".gif"), png = has_ext(path, ".png"), lua = has_ext(path, ".lua");
 	if (!gif && !png && !lua)
 		return error::BadArgs;
-	if (!filesystem.exists(path))
+	if (!storage->exists(path))
 		return error::NotFound;
 
 	// GIF, PNG and Lua share one RAM arena: the current one must be done first
@@ -323,7 +345,7 @@ uint16_t play_file(const char* path) {
 			return err;
 		}
 	} else {
-		File f = filesystem.open(path);
+		File f = storage->open(path);
 		String script = f.readString();
 		f.close();
 		const char* slash = strrchr(path, '/');
@@ -404,6 +426,8 @@ void protocol_begin(NimBLEServer* server) {
 	node.on(method::MatrixStop, matrix_stop);
 	node.on(method::MatrixPlaying, matrix_playing);
 	node.on(method::MatrixDepthSet, matrix_depth_set);
+	node.on(method::MatrixLayouts, matrix_layouts);
+	node.on(method::MatrixLayoutSet, matrix_layout_set);
 
 	log_queue = xQueueCreate(8, sizeof(LogEntry));
 	if (server) {
@@ -412,7 +436,6 @@ void protocol_begin(NimBLEServer* server) {
 		ble_on = true;
 	}
 	node.attach(serial);
-#ifdef USE_WIFI
 	String host = board;  // banana → banana.local
 	host.replace('_', '-');
 	wifi.setHostname(host);
@@ -430,7 +453,7 @@ void protocol_begin(NimBLEServer* server) {
 		// the web app, copied to /www on the SD card: one gzipped index.html
 		// (spectre-bt-app scripts/push-to-matrix.sh). A request needs a few KB:
 		// refused (503) rather than started when RAM is short.
-		http.serveStatic("/", filesystem, "/www/").setDefaultFile("index.html").setFilter([](AsyncWebServerRequest*) {
+		http.serveStatic("/", *storage, "/www/").setDefaultFile("index.html").setFilter([](AsyncWebServerRequest*) {
 			return heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) > 10 * 1024;
 		});
 		http.onNotFound([](AsyncWebServerRequest* r) {
@@ -448,23 +471,21 @@ void protocol_begin(NimBLEServer* server) {
 	wifi.radio = protocol_wifi_mode();
 	wifi.powerSave = false;  // WiFi mode = BLE off: full speed
 	wifi.begin();
-#endif
 }
 
 bool protocol_wifi_mode() {
-#ifdef USE_WIFI
 	static int mode = -1;
 	if (mode < 0) {
 		bool skip = skip_wifi == SKIP_WIFI;
 		skip_wifi = 0;  // the next reboot tries WiFi again
-		mode = WifiModule::saved() && !skip;
+		bool fits = layout_depth_max(*layout, true) != 0;
+		mode = WifiModule::saved() && !skip && fits;
 		if (skip)
 			Log.println("wifi: could not join the network, BLE mode for this boot");
+		else if (WifiModule::saved() && !fits)
+			Log.printf("wifi: no RAM for it next to the %s layout, BLE mode\n", layout->id);
 	}
 	return mode == 1;
-#else
-	return false;
-#endif
 }
 
 bool protocol_serial_active() {
@@ -484,7 +505,6 @@ void protocol_loop() {
 	if (ble_on)
 		ble.poll();
 	serial.poll();
-#ifdef USE_WIFI
 	ws.poll();
 	wifi.loop();
 	static bool joined = false;
@@ -507,7 +527,6 @@ void protocol_loop() {
 		skip_wifi = SKIP_WIFI;
 		reboot_at = millis() + 200;
 	}
-#endif
 	node.tick(millis());
 	ota.loop();
 	LogEntry e;

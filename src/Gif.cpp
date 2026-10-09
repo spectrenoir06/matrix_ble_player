@@ -7,16 +7,8 @@
 #include "Arena.hpp"
 #include "Log.hpp"
 
-#ifdef USE_SD
-#include "FS.h"
-#include "SD.h"
-#include "SPI.h"
-#define filesystem SD
-#endif
-#ifdef USE_SPIFFS
-#include "SPIFFS.h"
-#define filesystem SPIFFS
-#endif
+#include "Layout.hpp"
+#include "Storage.hpp"
 
 uint16_t HHH = 0;
 
@@ -122,11 +114,11 @@ namespace {
     int y, iWidth;
 
     iWidth = pDraw->iWidth;
-    if (iWidth > V_MATRIX_WIDTH)
-      iWidth = V_MATRIX_WIDTH;
+    if (iWidth > matrix_w)
+      iWidth = matrix_w;
 
-    int off_x = (V_MATRIX_WIDTH  - gif->getCanvasWidth() )/2;
-    int off_y = (V_MATRIX_HEIGHT - gif->getCanvasHeight())/2;
+    int off_x = (matrix_w  - gif->getCanvasWidth() )/2;
+    int off_y = (matrix_h - gif->getCanvasHeight())/2;
 
     palette = pDraw->pPalette24;
     y = pDraw->iY + pDraw->y; // current line
@@ -142,7 +134,7 @@ namespace {
   }
 
   void *GIFOpenFile(const char *fname, int32_t *pSize) {
-    current_gif_file = filesystem.open(fname);
+    current_gif_file = storage->open(fname);
     free((char *)fname);
     if (current_gif_file) {
       *pSize = current_gif_file.size();

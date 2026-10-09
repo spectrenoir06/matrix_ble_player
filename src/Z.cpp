@@ -2,16 +2,7 @@
 #include <atomic>
 #include "Log.hpp"
 
-#ifdef USE_SD
-#include "FS.h"
-#include "SD.h"
-#include "SPI.h"
-#define filesystem SD
-#endif
-#ifdef USE_SPIFFS
-#include "SPIFFS.h"
-#define filesystem SPIFFS
-#endif
+#include "Storage.hpp"
 
 extern VirtualMatrixPanel *virtualDisp;
 extern void flip_matrix();
@@ -40,7 +31,7 @@ namespace {
           if (current_file) { // close old gif file
             current_file.close();
           }
-          current_file = filesystem.open(fp, FILE_READ);
+          current_file = storage->open(fp, FILE_READ);
           free(fp);
           if (current_file.size() > 0) {
             uint8_t head[5];

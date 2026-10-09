@@ -15,14 +15,8 @@
 #include "Png.hpp"
 #include "Log.hpp"
 
-#ifdef USE_SD
-	#include "SD.h"
-	#define filesystem SD
-#endif
-#ifdef USE_SPIFFS
-	#include "SPIFFS.h"
-	#define filesystem SPIFFS
-#endif
+#include "Layout.hpp"
+#include "Storage.hpp"
 
 extern VirtualMatrixPanel *virtualDisp;
 extern void flip_matrix();
@@ -101,7 +95,7 @@ namespace SpectrePng {
     // decoder + raw image in the shared arena (GIF and Lua are stopped by the caller)
     if (!Arena::data())
       return spectre::error::NoMemory;
-    File f = filesystem.open(path);
+    File f = storage->open(path);
     if (!f)
       return spectre::error::NotFound;
 
@@ -210,18 +204,18 @@ namespace SpectrePng {
     if (!unfilter(raw, height, stride, bpp ? bpp : 1))
       return fail("bad filter");
 
-    int off_x = (V_MATRIX_WIDTH - (int)width) / 2;
-    int off_y = (V_MATRIX_HEIGHT - (int)height) / 2;
+    int off_x = (matrix_w - (int)width) / 2;
+    int off_y = (matrix_h - (int)height) / 2;
     Log.printf("PNG %s: %ux%u\n", path, width, height);
     virtualDisp->clearScreen();
     for (uint32_t y = 0; y < height; y++) {
       int py = off_y + (int)y;
-      if (py < 0 || py >= V_MATRIX_HEIGHT)
+      if (py < 0 || py >= matrix_h)
         continue;
       const uint8_t* p = raw + y * (stride + 1) + 1;
       for (uint32_t x = 0; x < width; x++) {
         int px = off_x + (int)x;
-        if (px < 0 || px >= V_MATRIX_WIDTH)
+        if (px < 0 || px >= matrix_w)
           continue;
         uint8_t r, g, b, a = 255;
         switch (type) {
