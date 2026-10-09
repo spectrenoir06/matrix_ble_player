@@ -20,4 +20,9 @@ namespace Lua {
    */
   void run_script(String script, String name = "script");
 
+  /**
+   * A script runs or is about to (false once it ended by itself).
+   */
+  bool running();
+
 }

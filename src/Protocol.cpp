@@ -13,6 +13,7 @@
 
 #include "Gif.hpp"
 #include "Lua.hpp"
+#include "Playlist.hpp"
 #include "Png.hpp"
 #include "Protocol.hpp"
 #include "Log.hpp"
@@ -119,7 +120,7 @@ AsyncWsLink ws("/ws", 1024, 4 * 1028);
 // ── board: /matrix/<board>/{gif,png,lua} ─────────────────────────────────────
 
 char board[33] = BOARD_NAME;
-const char* const BOARD_SUBDIRS[] = {"gif", "png", "lua"};
+const char* const BOARD_SUBDIRS[] = {"gif", "png", "lua", "playlist"};
 
 bool valid_board(const char* name) {
 	size_t n = strlen(name);
@@ -151,26 +152,36 @@ bool has_ext(const char* path, const char* ext) {
 
 // What plays (matrix.playing), "" when nothing; every change is pushed to the
 // clients (matrix.playing.changed): an app opened later still knows it.
+// A playlist: now_playing is its path, now_item the file it shows.
 char now_playing[FileModule::PATH_MAX_LEN] = "";
+char now_item[FileModule::PATH_MAX_LEN] = "";
 
-void set_playing(const char* path) {
-	if (strcmp(path, now_playing) == 0)
+void set_playing(const char* path, const char* item = "") {
+	if (strcmp(path, now_playing) == 0 && strcmp(item, now_item) == 0)
 		return;
 	strlcpy(now_playing, path, sizeof(now_playing));
-	uint8_t buf[2 + sizeof(now_playing)];
+	strlcpy(now_item, item, sizeof(now_item));
+	uint8_t buf[4 + sizeof(now_playing) + sizeof(now_item)];
 	Writer w(buf, sizeof(buf));
-	w.str(now_playing);
+	w.str(now_playing).str(now_item);
 	node.emit(method::MatrixPlayingChanged, w);
 }
 
 // Stop GIF and Lua and wait until they have released the shared arena.
-// forget: nothing plays afterwards (false: something else is about to).
-bool stop_all(bool forget = true) {
+bool stop_media() {
 	bool lua = Lua::stop();
 	bool gif = SpectreGif::stop();
+	return lua && gif;
+}
+
+// stop_media() and the playlist.
+// forget: nothing plays afterwards (false: something else is about to).
+bool stop_all(bool forget = true) {
+	Playlist::stop();
+	bool ok = stop_media();
 	if (forget)
 		set_playing("");
-	return lua && gif;
+	return ok;
 }
 
 // ── sys ──────────────────────────────────────────────────────────────────────
@@ -265,7 +276,8 @@ void apply_depth() {
 	if (bits == color_depth)
 		return;
 	String was = now_playing;
-	if (!stop_all(false)) {
+	bool playlist = Playlist::active();  // goes on with the item it was on
+	if (!(playlist ? stop_media() : stop_all(false))) {
 		reboot_at = millis() + 300;
 		return;
 	}
@@ -290,7 +302,9 @@ void apply_depth() {
 		preferences.putUChar("depth", bits);
 		Log.printf("color depth: %u bits (%u ms), free heap %u\n", bits, millis() - t0, esp_get_free_heap_size());
 	}
-	if (was.length())
+	if (playlist)
+		Playlist::replay();
+	else if (was.length())
 		play_file(was.c_str());
 	else
 		set_playing("");
@@ -323,7 +337,15 @@ void matrix_stop(Request& req) {
 }
 
 void matrix_playing(Request& req) {
-	req.result.str(now_playing);
+	req.result.str(now_playing).str(now_item);
+}
+
+void matrix_skip(Request& req) {
+	int8_t delta = req.args.i8();
+	if (!req.args.ok() || delta == 0)
+		return req.fail(error::BadArgs);
+	if (!Playlist::skip(delta))
+		req.fail(error::NotFound, "no playlist plays");
 }
 
 }  // namespace
@@ -343,29 +365,48 @@ String board_dir(const char* sub) {
 	return dir;
 }
 
-uint16_t play_file(const char* path) {
+uint16_t play_media(const char* path) {
 	bool gif = has_ext(path, ".gif"), png = has_ext(path, ".png"), lua = has_ext(path, ".lua");
 	if (!gif && !png && !lua)
 		return error::BadArgs;
 	if (!storage->exists(path))
 		return error::NotFound;
-
 	// GIF, PNG and Lua share one RAM arena: the current one must be done first
-	if (!stop_all(false))
+	if (!stop_media())
 		return error::Busy;
 	if (gif) {
 		SpectreGif::play(path);
 	} else if (png) {
-		if (uint16_t err = SpectrePng::show(path)) {
-			set_playing("");  // the previous file was stopped
+		if (uint16_t err = SpectrePng::show(path))
 			return err;
-		}
 	} else {
 		File f = storage->open(path);
 		String script = f.readString();
 		f.close();
 		const char* slash = strrchr(path, '/');
 		Lua::run_script(script, slash ? slash + 1 : path);
+	}
+	return 0;
+}
+
+void playing_changed(const char* path, const char* item) {
+	set_playing(path, item);
+}
+
+uint16_t play_file(const char* path) {
+	if (!stop_all(false))
+		return error::Busy;
+	if (has_ext(path, ".txt")) {
+		if (uint16_t err = Playlist::start(path)) {  // it reports each item itself
+			set_playing("");
+			return err;
+		}
+		Log.printf("play playlist %s\n", path);
+		return 0;
+	}
+	if (uint16_t err = play_media(path)) {
+		set_playing("");  // the previous file was stopped
+		return err;
 	}
 	set_playing(path);
 	Log.printf("play %s\n", path);
@@ -387,8 +428,10 @@ void protocol_begin(NimBLEServer* server) {
 	files.onModify = [](const char* path) {
 		if (SpectreGif::isPlaying(path))  // its file is about to change
 			SpectreGif::stop();
-		if (strcmp(path, now_playing) == 0)
+		if (strcmp(path, now_playing) == 0) {  // the file, or the playlist itself
+			Playlist::stop();
 			set_playing("");
+		}
 	};
 	static uint32_t upload_start = 0, progress_shown = 0, upload_size = 0;
 	files.onUploadStart = [](const char*, uint32_t size) {
@@ -444,6 +487,7 @@ void protocol_begin(NimBLEServer* server) {
 	node.on(method::MatrixDepthSet, matrix_depth_set);
 	node.on(method::MatrixLayouts, matrix_layouts);
 	node.on(method::MatrixLayoutSet, matrix_layout_set);
+	node.on(method::MatrixSkip, matrix_skip);
 
 	log_queue = xQueueCreate(8, sizeof(LogEntry));
 	if (server) {
@@ -552,6 +596,7 @@ void protocol_loop() {
 		w.u8(e.level).str(e.text);
 		node.emit(method::SysLog, w);
 	}
+	Playlist::loop();
 	if (pending_depth)
 		apply_depth();
 	if (reboot_at && millis() > reboot_at)

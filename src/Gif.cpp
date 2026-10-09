@@ -173,6 +173,8 @@ namespace {
   }
 
 
+  std::atomic<uint32_t> loops_done(0);
+
   void gifTask(void *parameter) {
     int i, t;
     uint8_t next_frame_ready = 0;
@@ -201,6 +203,7 @@ namespace {
           gif = new (Arena::data()) AnimatedGIF();
           gif->begin(GIF_PALETTE_RGB888);
           next_frame_ready = 0;
+          loops_done = 0;
           // fp will be freed by GIFOpenFile
           if(gif->open(fp, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
             next_frame_millis = 0;
@@ -228,6 +231,7 @@ namespace {
       if (t >= next_frame_millis) {
         next_frame_millis = millis() + i;
         if (!more_frame) {
+          loops_done++;
           gif->reset();
           flip_matrix();
           virtualDisp->clearScreen();
@@ -259,6 +263,7 @@ namespace SpectreGif {
     if (old_fp != NULL) {
       free(old_fp);
     }
+    loops_done = 0;  // not the previous GIF's
     stop_requested = false;
   }
 
@@ -277,6 +282,14 @@ namespace SpectreGif {
     for (int i = 0; i < 500 && active; i++)
       vTaskDelay(1 / portTICK_PERIOD_MS);
     return !active;
+  }
+
+  bool playing() {
+    return !stop_requested && (gif != nullptr || next_gif_file.load() != nullptr);
+  }
+
+  uint32_t loops() {
+    return loops_done;
   }
 
   bool isPlaying(const char* fp) {

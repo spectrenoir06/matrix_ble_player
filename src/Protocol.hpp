@@ -30,6 +30,11 @@ void board_begin();
 // "/matrix/<board>" or "/matrix/<board>/<sub>"
 String board_dir(const char* sub = nullptr);
 
-// Play a stored file by extension (.gif / .png / .lua).
+// Play a stored file by extension (.gif / .png / .lua, .txt: a playlist).
 // Returns 0 or a spectre::error code.
 uint16_t play_file(const char* path);
+// For playlists: show one .gif / .png / .lua (what showed is stopped, the
+// playlist goes on). Returns 0 or a spectre::error code.
+uint16_t play_media(const char* path);
+// What plays changed: the clients are told (matrix.playing.changed).
+void playing_changed(const char* path, const char* item = "");

@@ -253,6 +253,10 @@ namespace Lua {
     return !lua_running;
   }
 
+  bool running() {
+    return lua_running || current_lua_script.load() != nullptr;
+  }
+
   void run_script(String script, String name) {
     // stop current script
     spectre_lua_plz_stop = 1;
