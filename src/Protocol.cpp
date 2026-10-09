@@ -145,10 +145,27 @@ bool has_ext(const char* path, const char* ext) {
 	return n >= e && strcasecmp(path + n - e, ext) == 0;
 }
 
+// What plays (matrix.playing), "" when nothing; every change is pushed to the
+// clients (matrix.playing.changed): an app opened later still knows it.
+char now_playing[FileModule::PATH_MAX_LEN] = "";
+
+void set_playing(const char* path) {
+	if (strcmp(path, now_playing) == 0)
+		return;
+	strlcpy(now_playing, path, sizeof(now_playing));
+	uint8_t buf[2 + sizeof(now_playing)];
+	Writer w(buf, sizeof(buf));
+	w.str(now_playing);
+	node.emit(method::MatrixPlayingChanged, w);
+}
+
 // Stop GIF and Lua and wait until they have released the shared arena.
-bool stop_all() {
+// forget: nothing plays afterwards (false: something else is about to).
+bool stop_all(bool forget = true) {
 	bool lua = Lua::stop();
 	bool gif = SpectreGif::stop();
+	if (forget)
+		set_playing("");
 	return lua && gif;
 }
 
@@ -228,6 +245,10 @@ void matrix_stop(Request& req) {
 		req.fail(error::Busy);
 }
 
+void matrix_playing(Request& req) {
+	req.result.str(now_playing);
+}
+
 }  // namespace
 
 void board_begin() {
@@ -253,13 +274,15 @@ uint16_t play_file(const char* path) {
 		return error::NotFound;
 
 	// GIF, PNG and Lua share one RAM arena: the current one must be done first
-	if (!stop_all())
+	if (!stop_all(false))
 		return error::Busy;
 	if (gif) {
 		SpectreGif::play(path);
 	} else if (png) {
-		if (uint16_t err = SpectrePng::show(path))
+		if (uint16_t err = SpectrePng::show(path)) {
+			set_playing("");  // the previous file was stopped
 			return err;
+		}
 	} else {
 		File f = filesystem.open(path);
 		String script = f.readString();
@@ -267,6 +290,7 @@ uint16_t play_file(const char* path) {
 		const char* slash = strrchr(path, '/');
 		Lua::run_script(script, slash ? slash + 1 : path);
 	}
+	set_playing(path);
 	Log.printf("play %s\n", path);
 	return 0;
 }
@@ -286,6 +310,8 @@ void protocol_begin(NimBLEServer* server) {
 	files.onModify = [](const char* path) {
 		if (SpectreGif::isPlaying(path))  // its file is about to change
 			SpectreGif::stop();
+		if (strcmp(path, now_playing) == 0)
+			set_playing("");
 	};
 	static uint32_t upload_start = 0, progress_shown = 0, upload_size = 0;
 	files.onUploadStart = [](const char*, uint32_t size) {
@@ -337,6 +363,7 @@ void protocol_begin(NimBLEServer* server) {
 	node.on(method::MatrixBoardSet, matrix_board_set);
 	node.on(method::MatrixPlay, matrix_play);
 	node.on(method::MatrixStop, matrix_stop);
+	node.on(method::MatrixPlaying, matrix_playing);
 
 	log_queue = xQueueCreate(8, sizeof(LogEntry));
 	if (server) {
