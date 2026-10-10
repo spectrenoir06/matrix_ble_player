@@ -135,7 +135,8 @@ void loop() {
 
 	bool flat0 = lo[0] == hi[0], flat1 = lo[1] == hi[1];
 	if (flat0 && flat1 && hi[0] == 0 && hi[1] == 0)
-		Serial.print("  << SD stuck LOW: the mic sends nothing (power, EN, orientation, solder, or no clock at the mic)");
+		// the board's 100k pull-down holds SD at 0 whenever the mic doesn't drive it
+		Serial.print("  << SD always 0: the mic never drives it (check VDD / EN 3.3 V, SCK and WS at the mic, orientation, solder)");
 	else if (flat0 && flat1 && hi[0] == -1 && hi[1] == -1)
 		Serial.print("  << SD stuck HIGH: shorted to 3.3 V?");
 	else if (!flat0 && !flat1)
