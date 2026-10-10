@@ -256,6 +256,20 @@ void setup() {
 		is_fs_mnt = 1;
 	else
 		print_message("Can't mnt\nSD / SPIFFS");
+	{  // a board that had a card but can't read it now: say so (its files
+	   // are on the card, the flash holds none of them)
+		Preferences p;
+		p.begin("matrix", false);
+		if (storage_is_sd && !p.getBool("had_sd", false))
+			p.putBool("had_sd", true);
+		bool sd_lost = !storage_is_sd && p.getBool("had_sd", false);
+		p.end();
+		if (sd_lost) {
+			Log.line(LogLevel::Error, "SD card not readable: using the flash (none of the card's files)");
+			print_message("SD CARD\nERROR");
+			delay(2500);
+		}
+	}
 
 	HEAP_MARK("SD card / SPIFFS mounted");
 	String boot_anim;  // played once GIF / Lua tasks exist
@@ -264,6 +278,15 @@ void setup() {
 		board_begin();  // /matrix/<board>/{gif,png,lua}
 		root = storage->open(board_dir("gif"));
 		String saved = preferences.getString("anim", "");
+		String crashed = playing_before_crash();
+		if (crashed.length()) {  // that file crashed the board: not again
+			Log.printf("restarted after a crash while playing %s: not playing it again\n", crashed.c_str());
+			const char* name = strrchr(crashed.c_str(), '/');
+			print_message((String("CRASHED:\n") + (name ? name + 1 : crashed.c_str())).c_str());
+			delay(2500);
+			if (saved == crashed || crashed.endsWith(".txt"))
+				saved = "";
+		}
 		if (saved.length() && storage->exists(saved)) {
 			Log.printf("Start previous anim %s\n", saved.c_str());
 			boot_anim = saved;

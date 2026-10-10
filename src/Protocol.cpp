@@ -153,6 +153,16 @@ bool has_ext(const char* path, const char* ext) {
 
 // What plays (matrix.playing), "" when nothing; every change is pushed to the
 // clients (matrix.playing.changed): an app opened later still knows it.
+// What played, kept across a crash (RTC memory survives a panic or a
+// watchdog reset, not a power cycle): at boot, a file that crashed the board
+// is not started again (main.cpp).
+struct CrashMemo {
+	uint32_t magic;
+	char path[96];
+};
+RTC_NOINIT_ATTR CrashMemo crash_memo;
+constexpr uint32_t CRASH_MEMO_MAGIC = 0x504C4159;  // "PLAY"
+
 // A playlist: now_playing is its path, now_item the file it shows.
 char now_playing[FileModule::PATH_MAX_LEN] = "";
 char now_item[FileModule::PATH_MAX_LEN] = "";
@@ -162,6 +172,8 @@ void set_playing(const char* path, const char* item = "") {
 		return;
 	strlcpy(now_playing, path, sizeof(now_playing));
 	strlcpy(now_item, item, sizeof(now_item));
+	crash_memo.magic = CRASH_MEMO_MAGIC;
+	strlcpy(crash_memo.path, path, sizeof(crash_memo.path));
 	uint8_t buf[4 + sizeof(now_playing) + sizeof(now_item)];
 	Writer w(buf, sizeof(buf));
 	w.str(now_playing).str(now_item);
@@ -360,6 +372,14 @@ void matrix_skip(Request& req) {
 }
 
 }  // namespace
+
+String playing_before_crash() {
+	esp_reset_reason_t why = esp_reset_reason();
+	bool crashed = why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT || why == ESP_RST_WDT;
+	String path = crashed && crash_memo.magic == CRASH_MEMO_MAGIC ? String(crash_memo.path) : String();
+	crash_memo.magic = 0;
+	return path;
+}
 
 void board_begin() {
 	String saved = preferences.getString("board", BOARD_NAME);

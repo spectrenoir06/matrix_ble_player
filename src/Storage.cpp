@@ -17,14 +17,18 @@ bool storage_begin() {
 	// 20 MHz SPI (5x faster listings, uploads, GIF reads); the library's
 	// default 4 MHz as a fallback for cards / wiring that can't do it.
 	// 3 files open at most (default 5): each one reserves a 4 KB buffer.
-	for (uint32_t freq : {20000000, 20000000, 4000000}) {
+	// Several tries, ~2 s: a card often misses the first one, more so after a
+	// crash left it in the middle of something (each try resets it).
+	int tries = 0;
+	for (uint32_t freq : {20000000, 20000000, 4000000, 20000000, 4000000, 20000000, 4000000, 4000000}) {
+		tries++;
 		if (SD.begin(SD_CS, SPI, freq, "/sd", 3)) {
-			Log.printf("SD card mounted at %u MHz\n", freq / 1000000);
+			Log.printf("SD card mounted at %u MHz (try %d)\n", freq / 1000000, tries);
 			return true;
 		}
-		delay(10);
+		SD.end();
+		delay(50 * tries);
 	}
-	SD.end();
 	SPI.end();
 	Log.println("No SD card: files in SPIFFS");
 	storage = &SPIFFS;

@@ -30,6 +30,9 @@ void board_begin();
 // "/matrix/<board>" or "/matrix/<board>/<sub>"
 String board_dir(const char* sub = nullptr);
 
+// After a crash (panic, watchdog): what was playing then, else "". Once.
+String playing_before_crash();
+
 // Play a stored file by extension (.gif / .png / .lua, .txt: a playlist).
 // Returns 0 or a spectre::error code.
 uint16_t play_file(const char* path);
