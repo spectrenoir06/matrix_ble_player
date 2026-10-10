@@ -415,7 +415,8 @@ uint16_t play_media(const char* path) {
 		String script = f.readString();
 		f.close();
 		const char* slash = strrchr(path, '/');
-		Lua::run_script(script, slash ? slash + 1 : path);
+		if (!Lua::run_script(script, slash ? slash + 1 : path))
+			return error::NoMemory;
 	}
 	return 0;
 }

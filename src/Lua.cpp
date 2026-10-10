@@ -20,8 +20,9 @@ extern int spectre_lua_plz_stop;
 namespace {
 
   // The Lua task exists only while scripts run: created by run_script(), it
-  // deletes itself when there is nothing left to run (its 10 KB stack is
-  // RAM WiFi needs). The lock: a script queued while it is exiting is not lost.
+  // deletes itself 2 s after the last script ended (its 10 KB stack is RAM
+  // WiFi needs; switching scripts meanwhile reuses it). The lock: a script
+  // queued while it is exiting is not lost.
   static TaskHandle_t runLuaTaskHandle = NULL;
   static portMUX_TYPE lua_task_lock = portMUX_INITIALIZER_UNLOCKED;
   constexpr uint32_t LUA_STACK = 1024 * 10;
@@ -301,6 +302,11 @@ namespace {
         lua_exec();
       }
       lua_running = false;
+      // wait a moment for the next script: switching scripts reuses this
+      // task (a new one would need another 10 KB stack while this one's is
+      // not freed yet: "not enough memory to start" on a busy heap)
+      for (int i = 0; i < 200 && current_lua_script.load() == nullptr; i++)
+        vTaskDelay(10 / portTICK_PERIOD_MS);
       bool done;
       portENTER_CRITICAL(&lua_task_lock);
       done = current_lua_script.load() == nullptr;
@@ -335,7 +341,7 @@ namespace Lua {
     return lua_running || current_lua_script.load() != nullptr;
   }
 
-  void run_script(String script, String name) {
+  bool run_script(String script, String name) {
     // stop current script
     spectre_lua_plz_stop = 1;
     // copy script string
@@ -354,7 +360,9 @@ namespace Lua {
       runLuaTaskHandle = NULL;
       delete current_lua_script.exchange(nullptr, std::memory_order_acq_rel);
       Log.line(LogLevel::Error, "lua: not enough memory to start");
+      return false;
     }
+    return true;
   }
 
 }

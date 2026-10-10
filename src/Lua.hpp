@@ -18,7 +18,7 @@ namespace Lua {
    * Run the supplied script.
    * If another script is running, it will stopped first.
    */
-  void run_script(String script, String name = "script");
+  bool run_script(String script, String name = "script");  // false: no memory for the task
 
   /**
    * A script runs or is about to (false once it ended by itself).
