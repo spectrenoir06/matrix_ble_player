@@ -6,6 +6,7 @@
 
 extern MatrixPanel_I2S_DMA *display;
 #include "Audio.hpp"
+#include "Clock.hpp"
 #include "Layout.hpp"
 #include "Framebuffer.hpp"
 #include "Arena.hpp"
@@ -63,8 +64,29 @@ namespace {
   }
 
   static int lua_wrapper_millis(lua_State *lua_state) {
-    lua_pushnumber(lua_state, (lua_Number) millis());
+    // an integer: this Lua's numbers are single floats, exact only to 2^24 ms
+    // (4.6 h of uptime); 32-bit integers are exact for 24 days, then wrap
+    // (differences stay right)
+    lua_pushinteger(lua_state, (lua_Integer) millis());
     return 1;
+  }
+
+  // getTime(): hour, min, sec, day, month (1-12), year, weekday (1 = Sunday,
+  // like os.date); nil while the time is unknown (no client nor NTP gave it)
+  static int lua_wrapper_getTime(lua_State *lua_state) {
+    struct tm t;
+    if (!clock_local(t)) {
+      lua_pushnil(lua_state);
+      return 1;
+    }
+    lua_pushinteger(lua_state, t.tm_hour);
+    lua_pushinteger(lua_state, t.tm_min);
+    lua_pushinteger(lua_state, t.tm_sec);
+    lua_pushinteger(lua_state, t.tm_mday);
+    lua_pushinteger(lua_state, t.tm_mon + 1);
+    lua_pushinteger(lua_state, t.tm_year + 1900);
+    lua_pushinteger(lua_state, t.tm_wday + 1);
+    return 7;
   }
 
   static int lua_wrapper_printBLE(lua_State *lua_state) {
@@ -256,6 +278,7 @@ namespace {
     lua.Lua_register("getWave",        (const lua_CFunction) &lua_wrapper_getWave);
     lua.Lua_register("scroll",         (const lua_CFunction) &lua_wrapper_scroll);
     lua.Lua_register("getPixel",       (const lua_CFunction) &lua_wrapper_getPixel);
+    lua.Lua_register("getTime",        (const lua_CFunction) &lua_wrapper_getTime);
     
     spectre_lua_plz_stop = 0;
     String ret = lua.Lua_dostring(&str->source, str->name.c_str());

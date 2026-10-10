@@ -11,6 +11,7 @@
 #include <spectre/wifi_esp32.h>
 #include <spectre/ws_async.h>
 
+#include "Clock.hpp"
 #include "Gif.hpp"
 #include "Lua.hpp"
 #include "Playlist.hpp"
@@ -189,6 +190,16 @@ bool stop_all(bool forget = true) {
 void sys_info(Request& req) {
 	req.result.str(FIRMWARE_VERSION).str(BUILD_GIT_COMMIT_HASH).u32(millis()).u32(esp_get_free_heap_size())
 	    .u32(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+}
+
+void sys_time_set(Request& req) {
+	uint32_t unix = req.args.u32();
+	int16_t offset = req.args.i16();
+	if (!req.args.ok())
+		return req.fail(error::BadArgs);
+	clock_set(unix, offset);
+	if (preferences.getShort("utc_off", INT16_MIN) != offset)
+		preferences.putShort("utc_off", offset);  // for NTP after a reboot
 }
 
 void sys_reboot(Request&) {
@@ -420,6 +431,8 @@ void protocol_begin(NimBLEServer* server) {
 
 	node.on(method::SysInfo, sys_info);
 	node.on(method::SysReboot, sys_reboot);
+	node.on(method::SysTimeSet, sys_time_set);
+	clock_set_offset(preferences.getShort("utc_off", 0));
 	node.on(method::LightBrightnessSet, brightness_set);
 	node.on(method::LightBrightnessStep, brightness_step);
 	node.on(method::LightFill, fill);
@@ -509,6 +522,7 @@ void protocol_begin(NimBLEServer* server) {
 			Log.printf("wifi: %s\n", names[s]);
 	};
 	wifi.onConnected = [] {  // servers and their buffers only once WiFi is up
+		clock_ntp();
 		ws.begin(http);
 		// the web app, copied to /www on the SD card: one gzipped index.html
 		// (spectre-bt-app scripts/push-to-matrix.sh). A request needs a few KB:
